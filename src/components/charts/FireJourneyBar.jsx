@@ -65,7 +65,7 @@ export function FireJourneyBar({
           {stages.map((stage, i) => {
             const reached = i <= lastReachedIndex
             const isActive = stage.id === activeStageId
-            const xPct = (i / (n - 1)) * 100
+            const xPct = ((i + 1) / n) * 100
 
             return (
               <button
@@ -97,7 +97,7 @@ export function FireJourneyBar({
         {/* Labels under each stop */}
         <div className="relative h-12 mt-3 mx-3">
           {stages.map((stage, i) => {
-            const xPct = (i / (n - 1)) * 100
+            const xPct = ((i + 1) / n) * 100
             const isActive = stage.id === activeStageId
             return (
               <button

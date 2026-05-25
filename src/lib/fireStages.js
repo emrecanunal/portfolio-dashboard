@@ -45,21 +45,22 @@ export function computeJourneyPosition({ currentValueUSD, monthlyExpensesUSD, ac
     if (currentValueUSD >= stages[i].targetUSD) lastReached = i
   }
 
-  // Position on the bar: stops are at 0, 1/(n-1), 2/(n-1), ..., 1
-  // Between two stops, interpolate based on $-progress between them.
+  // Position on the bar: stops are at 1/n, 2/n, ..., n/n (= 1)
+  // The bar starts at 0 (before the first stop), so there is always
+  // visible "empty" space to the left when the user hasn't reached Coast FIRE.
   const n = stages.length
   let percentOnBar
   if (lastReached === n - 1) {
     percentOnBar = 1
   } else if (lastReached === -1) {
-    // Not even at coast — interpolate from 0 to coast
-    percentOnBar = (currentValueUSD / stages[0].targetUSD) * (1 / (n - 1))
+    // Not yet at Coast — interpolate from 0 to Coast stop (1/n)
+    percentOnBar = (currentValueUSD / stages[0].targetUSD) * (1 / n)
   } else {
     const start = stages[lastReached].targetUSD
     const end = stages[lastReached + 1].targetUSD
     const fraction = (currentValueUSD - start) / (end - start)
-    const baseSlot = lastReached / (n - 1)
-    percentOnBar = baseSlot + fraction * (1 / (n - 1))
+    const baseSlot = (lastReached + 1) / n   // position of the stop just reached
+    percentOnBar = baseSlot + fraction * (1 / n)
   }
 
   const activeTarget = stages[activeStageIndex]?.targetUSD || stages[2].targetUSD
