@@ -116,7 +116,9 @@ export async function fetchAllPrices({ holdings, finnhubApiKey, onProgress }) {
   const tefasSyms = []
 
   for (const h of holdings) {
-    if (h.assetType === 'global' && !h.symbol.includes('.')) {
+    // Note: dotted US tickers like BRK.B, BF.B are legitimate global symbols.
+    // BIST/TEFAS already routed below by assetType, so no need to exclude here.
+    if (h.assetType === 'global') {
       globalSyms.push(h.symbol)
     } else if (h.assetType === 'bist') {
       bistSyms.push(h.symbol)
@@ -199,5 +201,6 @@ function sleep(ms) {
 
 // Helper used by Settings table — kept for backward compatibility
 export function isFetchableViaFinnhub(symbol, assetType) {
-  return assetType === 'global' && symbol && !symbol.includes('.')
+  // Dotted US tickers (e.g. BRK.B) are valid on Finnhub; only the assetType check matters.
+  return assetType === 'global' && !!symbol
 }

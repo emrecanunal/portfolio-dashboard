@@ -22,8 +22,21 @@ const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
 async function fetchOne(symbol) {
-  // Stooq expects ".US" suffix for US tickers; we add it if missing
-  const stooqSymbol = symbol.includes('.') ? symbol.toLowerCase() : `${symbol.toLowerCase()}.us`
+  // Stooq symbol rules for US equities:
+  //   - Suffix ".US" is required (e.g. AAPL → aapl.us)
+  //   - Class-share dots become dashes (BRK.B → brk-b.us, BF.B → bf-b.us, RDS.A → rds-a.us)
+  //   - Already-suffixed symbols (e.g. "AAPL.US") are passed through lowercased
+  const lower = symbol.toLowerCase()
+  let stooqSymbol
+  if (lower.endsWith('.us') || lower.endsWith('.uk') || lower.endsWith('.de') || lower.endsWith('.jp')) {
+    // Caller already provided an exchange suffix
+    stooqSymbol = lower
+  } else if (lower.includes('.')) {
+    // Class-share ticker like brk.b → brk-b.us
+    stooqSymbol = `${lower.replace(/\./g, '-')}.us`
+  } else {
+    stooqSymbol = `${lower}.us`
+  }
   const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=d&f=sd2t2ohlcvn&h&e=csv`
 
   const res = await fetch(url, {
