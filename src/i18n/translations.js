@@ -61,6 +61,7 @@ export const translations = {
       recentTransactions: 'Recent transactions',
       addTransaction: 'Add transaction',
       lastNMonths: 'Last {n} months',
+      allTimeRange: 'All time',
     },
     fire: {
       progress: 'FIRE progress',
@@ -359,6 +360,7 @@ export const translations = {
       recentTransactions: 'Son işlemler',
       addTransaction: 'İşlem ekle',
       lastNMonths: 'Son {n} ay',
+      allTimeRange: 'Tüm zamanlar',
     },
     fire: {
       progress: 'FIRE ilerleme',

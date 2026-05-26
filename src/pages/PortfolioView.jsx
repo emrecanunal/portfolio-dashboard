@@ -20,6 +20,7 @@ import {
   computePortfolioSummary,
   computeAllocation,
   computeAllocationDetail,
+  computeCashByCurrency,
   computePerformanceSeries,
   computeFireMetrics,
   computeMonthlySavingsSeries,
@@ -64,14 +65,24 @@ export function PortfolioView({ scope = { type: 'master' } }) {
 
   const allocation = useMemo(() => computeAllocation(summary), [summary])
 
-  const allocationDetail = useMemo(
-    () => computeAllocationDetail(summary, priceCache, settings.fxRates),
-    [summary, priceCache, settings.fxRates]
+  // Per-currency cash split (TRY, USD, EUR, …) — feeds the breakdown widget
+  // so it can show e.g. "$3.272" and "₺96.475" as separate rows.
+  const cashByCurrency = useMemo(
+    () => computeCashByCurrency(transactions, portfolioId),
+    [transactions, portfolioId]
   )
 
+  const allocationDetail = useMemo(
+    () => computeAllocationDetail(summary, priceCache, settings.fxRates, cashByCurrency),
+    [summary, priceCache, settings.fxRates, cashByCurrency]
+  )
+
+  // The same selector that drives FIRE lookback also drives the chart range.
+  // A value of 0 means "All time" — computePerformanceSeries handles that by
+  // anchoring to the earliest transaction date.
   const performance = useMemo(
-    () => computePerformanceSeries(scopedTxns, priceCache, settings.fxRates, 6),
-    [scopedTxns, priceCache, settings.fxRates]
+    () => computePerformanceSeries(scopedTxns, priceCache, settings.fxRates, settings.fireLookbackMonths),
+    [scopedTxns, priceCache, settings.fxRates, settings.fireLookbackMonths]
   )
 
   const fireMetrics = useMemo(
@@ -181,6 +192,7 @@ export function PortfolioView({ scope = { type: 'master' } }) {
             <option value={3}>{ti(t.dashboard.lastNMonths, { n: 3 })}</option>
             <option value={6}>{ti(t.dashboard.lastNMonths, { n: 6 })}</option>
             <option value={12}>{ti(t.dashboard.lastNMonths, { n: 12 })}</option>
+            <option value={0}>{t.dashboard.allTimeRange}</option>
           </select>
           <Button onClick={() => setModalOpen(true)}>
             <span className="flex items-center gap-1.5">
@@ -248,7 +260,11 @@ export function PortfolioView({ scope = { type: 'master' } }) {
           <CardHeader>
             <div>
               <CardTitle>{t.dashboard.performance}</CardTitle>
-              <CardSubtitle>TRY · {ti(t.dashboard.lastNMonths, { n: 6 })}</CardSubtitle>
+              <CardSubtitle>
+                TRY · {settings.fireLookbackMonths
+                  ? ti(t.dashboard.lastNMonths, { n: settings.fireLookbackMonths })
+                  : t.dashboard.allTimeRange}
+              </CardSubtitle>
             </div>
           </CardHeader>
           <CardBody>
@@ -362,7 +378,11 @@ export function PortfolioView({ scope = { type: 'master' } }) {
         </CardBody>
       </Card>
 
-      <AddTransactionModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <AddTransactionModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        defaultPortfolioId={portfolioId}
+      />
     </div>
   )
 }

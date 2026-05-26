@@ -21,7 +21,10 @@ const CURRENCY_OPTIONS = ['TRY', 'USD', 'EUR']
 // Modal supports two modes:
 //   open mode (no editing) — pass existingTxn={null}
 //   edit mode               — pass existingTxn={transactionObject}
-export function AddTransactionModal({ open, onClose, existingTxn = null }) {
+//
+// `defaultPortfolioId` pre-selects a specific sub-portfolio when opening from
+// a portfolio detail page. The user can still change it via the dropdown.
+export function AddTransactionModal({ open, onClose, existingTxn = null, defaultPortfolioId = null }) {
   const { t } = useT()
   const transactions = usePortfolioStore((s) => s.transactions)
   const subPortfolios = usePortfolioStore((s) => s.subPortfolios)
@@ -32,7 +35,7 @@ export function AddTransactionModal({ open, onClose, existingTxn = null }) {
 
   const isEdit = Boolean(existingTxn)
 
-  const [form, setForm] = useState(() => initialForm(subPortfolios, existingTxn))
+  const [form, setForm] = useState(() => initialForm(subPortfolios, existingTxn, defaultPortfolioId))
   const [confirmedCashWarning, setConfirmedCashWarning] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [priceAutofilled, setPriceAutofilled] = useState(false)
@@ -40,12 +43,12 @@ export function AddTransactionModal({ open, onClose, existingTxn = null }) {
   // Reset form whenever the modal opens or the txn-being-edited changes
   useEffect(() => {
     if (open) {
-      setForm(initialForm(subPortfolios, existingTxn))
+      setForm(initialForm(subPortfolios, existingTxn, defaultPortfolioId))
       setConfirmedCashWarning(false)
       setSubmitError('')
       setPriceAutofilled(false)
     }
-  }, [open, existingTxn, subPortfolios])
+  }, [open, existingTxn, subPortfolios, defaultPortfolioId])
 
   const update = (patch) => setForm((prev) => ({ ...prev, ...patch }))
 
@@ -442,7 +445,7 @@ function CashWarningBox({ warning, confirmed, onConfirm }) {
   )
 }
 
-function initialForm(subPortfolios, existingTxn) {
+function initialForm(subPortfolios, existingTxn, defaultPortfolioId = null) {
   if (existingTxn) {
     return {
       date: existingTxn.date,
@@ -457,6 +460,10 @@ function initialForm(subPortfolios, existingTxn) {
       notes: existingTxn.notes || '',
     }
   }
+  // Pre-select the caller's portfolio if it still exists; fall back to first.
+  const preferred = defaultPortfolioId && subPortfolios.some((p) => p.id === defaultPortfolioId)
+    ? defaultPortfolioId
+    : subPortfolios[0]?.id || ''
   return {
     date: new Date().toISOString().slice(0, 10),
     type: 'buy',
@@ -466,7 +473,7 @@ function initialForm(subPortfolios, existingTxn) {
     price: '',
     fee: '',
     currency: 'TRY',
-    portfolioId: subPortfolios[0]?.id || '',
+    portfolioId: preferred,
     notes: '',
   }
 }

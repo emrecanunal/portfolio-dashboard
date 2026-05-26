@@ -55,6 +55,32 @@ export function computeCashByPortfolio(transactions, fxRates) {
   return cash
 }
 
+// Same logic as computeCashByPortfolio but tracks cash separately per currency.
+// Returns Map<currency, amountInThatCurrency>, e.g. { TRY: 96475, USD: 3271.99 }.
+// Used by the asset-breakdown widget so TRY and USD cash render as separate
+// rows. portfolioId=null aggregates across all portfolios.
+export function computeCashByCurrency(transactions, portfolioId = null) {
+  const cash = new Map()
+  for (const tx of transactions) {
+    if (portfolioId && tx.portfolioId !== portfolioId) continue
+    const ccy = tx.currency || 'TRY'
+    const current = cash.get(ccy) || 0
+    const localGross = (tx.quantity || 1) * (tx.price || 1)
+    const fee = tx.fee || 0
+
+    if (tx.type === 'deposit' || (tx.assetType === 'cash' && tx.type === 'buy')) {
+      cash.set(ccy, current + localGross)
+    } else if (tx.type === 'withdraw') {
+      cash.set(ccy, current - localGross - fee)
+    } else if (tx.type === 'buy') {
+      cash.set(ccy, current - localGross - fee)
+    } else if (tx.type === 'sell') {
+      cash.set(ccy, current + localGross - fee)
+    }
+  }
+  return cash
+}
+
 export function valueHoldings(holdings, priceCache, fxRates) {
   return holdings.map((h) => {
     const currentPrice = priceCache[h.symbol]?.price ?? h.avgCost
@@ -124,15 +150,15 @@ export function computeAllocation(summary) {
 // inside it (so the UI can expand to show positions). Daily change is summed
 // across positions using each price-cache entry's previousClose, falling back
 // to 0 when previous-close data is missing (e.g., manual prices).
-export function computeAllocationDetail(summary, priceCache, fxRates) {
-  const { holdings, cashTotal, totalValue } = summary
+//
+// Cash is split by currency — TRY and USD cash render as separate rows.
+// Pass `cashByCurrency` (a Map<ccy, amount>) so the widget can show native
+// amounts alongside their TRY equivalents.
+export function computeAllocationDetail(summary, priceCache, fxRates, cashByCurrency = null) {
+  const { holdings, totalValue } = summary
 
   const empty = () => ({ value: 0, dayChangeTRY: 0, prevValueTRY: 0, holdings: [] })
-  const buckets = { bist: empty(), tefas: empty(), global: empty(), cash: empty() }
-
-  // Cash sits in its own bucket with no day-change (it doesn't move).
-  buckets.cash.value = cashTotal
-  // We surface no positions inside Cash — keep it as a simple line.
+  const buckets = { bist: empty(), tefas: empty(), global: empty() }
 
   for (const h of holdings) {
     if (!(h.assetType in buckets)) continue
@@ -163,7 +189,7 @@ export function computeAllocationDetail(summary, priceCache, fxRates) {
     })
   }
 
-  return Object.entries(buckets)
+  const investmentRows = Object.entries(buckets)
     .filter(([_, v]) => v.value > 0)
     .map(([key, v]) => ({
       key,
@@ -173,17 +199,75 @@ export function computeAllocationDetail(summary, priceCache, fxRates) {
       dayChangePct: v.prevValueTRY > 0 ? (v.dayChangeTRY / v.prevValueTRY) * 100 : 0,
       holdings: v.holdings.sort((a, b) => b.marketValueTRY - a.marketValueTRY),
     }))
+
+  // Cash buckets — one row per currency. Native amount carried separately so
+  // the widget can show "₺96.475" vs "$3.272" instead of always TRY-equivalent.
+  const cashRows = []
+  if (cashByCurrency) {
+    for (const [ccy, amount] of cashByCurrency.entries()) {
+      if (!amount || amount <= 0) continue
+      const trEquivalent = convertToTRY(amount, ccy, fxRates)
+      cashRows.push({
+        key: `cash_${ccy}`,
+        kind: 'cash',
+        currency: ccy,
+        nativeValue: amount,
+        value: trEquivalent,
+        pct: totalValue > 0 ? (trEquivalent / totalValue) * 100 : 0,
+        dayChangeTRY: 0,
+        dayChangePct: 0,
+        holdings: [],
+      })
+    }
+  } else if (summary.cashTotal > 0) {
+    // Fallback when caller didn't supply per-currency cash — single TRY line.
+    cashRows.push({
+      key: 'cash_TRY',
+      kind: 'cash',
+      currency: 'TRY',
+      nativeValue: summary.cashTotal,
+      value: summary.cashTotal,
+      pct: totalValue > 0 ? (summary.cashTotal / totalValue) * 100 : 0,
+      dayChangeTRY: 0,
+      dayChangePct: 0,
+      holdings: [],
+    })
+  }
+
+  return [...investmentRows, ...cashRows]
 }
 
+// months = 0 (or any falsy value) means "All time" — series spans from the
+// earliest transaction's month up to the current month. We cap at 60 months
+// to keep the chart readable for very old accounts.
 export function computePerformanceSeries(transactions, priceCache, fxRates, months = 6) {
   const now = new Date()
+  let effectiveMonths = months
+  if (!months || months <= 0) {
+    if (transactions.length === 0) {
+      effectiveMonths = 6
+    } else {
+      const earliest = transactions
+        .map((t) => new Date(t.date))
+        .reduce((a, b) => (a < b ? a : b))
+      const monthsSpan =
+        (now.getFullYear() - earliest.getFullYear()) * 12 +
+        (now.getMonth() - earliest.getMonth()) + 1
+      effectiveMonths = Math.max(2, Math.min(60, monthsSpan))
+    }
+  }
+
   const series = []
-  for (let i = months - 1; i >= 0; i--) {
+  for (let i = effectiveMonths - 1; i >= 0; i--) {
     const cutoff = new Date(now.getFullYear(), now.getMonth() - i + 1, 0)
     const txnsUpTo = transactions.filter((t) => new Date(t.date) <= cutoff)
     const summary = computePortfolioSummaryAt(txnsUpTo, priceCache, fxRates)
     series.push({
-      label: cutoff.toLocaleDateString('en-US', { month: 'short' }),
+      label: cutoff.toLocaleDateString('en-US', {
+        month: 'short',
+        // For long ranges, include the year so the x-axis is unambiguous
+        ...(effectiveMonths > 12 ? { year: '2-digit' } : {}),
+      }),
       value: summary.totalValue,
       date: cutoff.toISOString().slice(0, 10),
     })
@@ -201,10 +285,14 @@ function computePortfolioSummaryAt(txns, priceCache, fxRates) {
 }
 
 export function computeFireMetrics(transactions, priceCache, fxRates, lookbackMonths) {
+  // FIRE math needs a finite window. When the chart selector is set to "All
+  // time" (lookbackMonths=0), fall back to 12 months for these per-month
+  // averages — anything longer dilutes the recency signal anyway.
+  const effectiveMonths = lookbackMonths && lookbackMonths > 0 ? lookbackMonths : 12
   const now = new Date()
-  const cutoffPast = new Date(now.getFullYear(), now.getMonth() - lookbackMonths, now.getDate())
+  const cutoffPast = new Date(now.getFullYear(), now.getMonth() - effectiveMonths, now.getDate())
 
-  const series = computePerformanceSeries(transactions, priceCache, fxRates, lookbackMonths + 1)
+  const series = computePerformanceSeries(transactions, priceCache, fxRates, effectiveMonths + 1)
   if (series.length < 2) {
     return { avgMonthlySavingsTRY: 0, avgMonthlyGrowthPct: 0, annualizedReturn: 0 }
   }
@@ -216,13 +304,13 @@ export function computeFireMetrics(transactions, priceCache, fxRates, lookbackMo
     if (tx.type === 'buy' || tx.type === 'deposit') netInflow += amt
     if (tx.type === 'sell' || tx.type === 'withdraw') netInflow -= amt
   }
-  const avgMonthlySavingsTRY = netInflow / lookbackMonths
+  const avgMonthlySavingsTRY = netInflow / effectiveMonths
 
   const start = series[0].value
   const end = series[series.length - 1].value
   const growthAmount = end - start - netInflow
   const avgMonthlyGrowthPct =
-    start > 0 ? ((growthAmount / start) / lookbackMonths) * 100 : 0
+    start > 0 ? ((growthAmount / start) / effectiveMonths) * 100 : 0
   const annualizedReturn = avgMonthlyGrowthPct * 12
 
   return { avgMonthlySavingsTRY, avgMonthlyGrowthPct, annualizedReturn }

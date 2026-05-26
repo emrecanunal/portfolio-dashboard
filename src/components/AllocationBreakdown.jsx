@@ -12,13 +12,20 @@ import { Card, CardHeader, CardTitle, CardSubtitle, CardBody } from './ui/Primit
 import { cn } from '../lib/utils.js'
 
 // Match the colour palette already in AllocationDonut so the visual language
-// stays consistent across the donut and these rows.
+// stays consistent across the donut and these rows. Cash currencies share the
+// gray family with slight hue shifts so each cash row is recognisable but
+// clearly distinct from BIST/TEFAS/Global slices.
 const CATEGORY_COLORS = {
   bist: '#3b82f6',
   global: '#10b981',
   tefas: '#a855f7',
   cash: '#71717a',
+  cash_TRY: '#6b7280',
+  cash_USD: '#9ca3af',
+  cash_EUR: '#a3a3a3',
 }
+
+const CCY_SYMBOLS = { TRY: '₺', USD: '$', EUR: '€' }
 
 function PositionsCount({ n, t, ti }) {
   if (n === 1) return <>{t.dashboard.onePosition}</>
@@ -76,8 +83,14 @@ function HoldingRow({ h }) {
 
 function CategoryRow({ entry, expanded, onToggle, t, ti }) {
   const color = CATEGORY_COLORS[entry.key] || '#71717a'
-  const label = t.assets[entry.key] || entry.key
-  const isCash = entry.key === 'cash'
+  const isCash = entry.kind === 'cash' || entry.key === 'cash' || entry.key?.startsWith('cash_')
+  // Cash rows get a currency-aware label, e.g. "Cash (USD)"
+  let label
+  if (isCash) {
+    label = `${t.assets.cash} (${entry.currency || 'TRY'})`
+  } else {
+    label = t.assets[entry.key] || entry.key
+  }
   const expandable = !isCash && entry.holdings && entry.holdings.length > 0
 
   return (
@@ -111,9 +124,20 @@ function CategoryRow({ entry, expanded, onToggle, t, ti }) {
           </div>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-base text-text-primary tabular-nums font-medium">
-            {formatCurrency(entry.value, 'TRY', { decimals: 0 })}
-          </div>
+          {isCash && entry.currency && entry.currency !== 'TRY' ? (
+            <>
+              <div className="text-base text-text-primary tabular-nums font-medium">
+                {formatCurrency(entry.nativeValue, entry.currency, { decimals: 2 })}
+              </div>
+              <div className="text-2xs text-text-tertiary tabular-nums">
+                ≈ {formatCurrency(entry.value, 'TRY', { decimals: 0 })}
+              </div>
+            </>
+          ) : (
+            <div className="text-base text-text-primary tabular-nums font-medium">
+              {formatCurrency(entry.value, 'TRY', { decimals: 0 })}
+            </div>
+          )}
           {!isCash && (
             <div className="mt-0.5">
               <ChangeChip amount={entry.dayChangeTRY} pct={entry.dayChangePct} />
@@ -149,11 +173,18 @@ export function AllocationBreakdown({ allocation }) {
     return null
   }
 
-  // Display order: BIST → TEFAS → Global → Cash (mirrors typical Turkish broker UIs).
-  const ORDER = ['bist', 'tefas', 'global', 'cash']
-  const sorted = [...allocation].sort(
-    (a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key)
-  )
+  // Display order: BIST → TEFAS → Global → Cash (TRY first, then USD, EUR, ...).
+  // Mirrors typical Turkish broker UIs and keeps native-currency cash visible.
+  const ORDER = ['bist', 'tefas', 'global', 'cash', 'cash_TRY', 'cash_USD', 'cash_EUR']
+  const sorted = [...allocation].sort((a, b) => {
+    const ai = ORDER.indexOf(a.key)
+    const bi = ORDER.indexOf(b.key)
+    // Unknown keys (e.g. cash_GBP) fall after listed ones, sorted alphabetically.
+    if (ai === -1 && bi === -1) return a.key.localeCompare(b.key)
+    if (ai === -1) return 1
+    if (bi === -1) return -1
+    return ai - bi
+  })
 
   return (
     <Card>
