@@ -19,6 +19,7 @@ import { useT } from '../i18n/useT.js'
 import {
   computePortfolioSummary,
   computeAllocation,
+  computeAllocationDetail,
   computePerformanceSeries,
   computeFireMetrics,
   computeMonthlySavingsSeries,
@@ -30,6 +31,7 @@ import { formatCurrency, formatPercent, formatSignedCurrency, convertFromTRY } f
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
 import { AllocationDonut } from '../components/charts/AllocationDonut.jsx'
+import { AllocationBreakdown } from '../components/AllocationBreakdown.jsx'
 import { PerformanceLine } from '../components/charts/PerformanceLine.jsx'
 import { FireProgressCard } from '../components/charts/FireProgressCard.jsx'
 import { AddTransactionModal } from '../components/modals/AddTransactionModal.jsx'
@@ -61,6 +63,11 @@ export function PortfolioView({ scope = { type: 'master' } }) {
   )
 
   const allocation = useMemo(() => computeAllocation(summary), [summary])
+
+  const allocationDetail = useMemo(
+    () => computeAllocationDetail(summary, priceCache, settings.fxRates),
+    [summary, priceCache, settings.fxRates]
+  )
 
   const performance = useMemo(
     () => computePerformanceSeries(scopedTxns, priceCache, settings.fxRates, 6),
@@ -296,6 +303,9 @@ export function PortfolioView({ scope = { type: 'master' } }) {
           </CardBody>
         </Card>
       )}
+
+      {/* === ASSET BREAKDOWN === */}
+      <AllocationBreakdown allocation={allocationDetail} />
 
       {/* === RECENT TRANSACTIONS === */}
       <Card>

@@ -119,6 +119,62 @@ export function computeAllocation(summary) {
     }))
 }
 
+// Detailed breakdown for the AllocationBreakdown widget.
+// For each asset category, returns the bucket totals AND the list of holdings
+// inside it (so the UI can expand to show positions). Daily change is summed
+// across positions using each price-cache entry's previousClose, falling back
+// to 0 when previous-close data is missing (e.g., manual prices).
+export function computeAllocationDetail(summary, priceCache, fxRates) {
+  const { holdings, cashTotal, totalValue } = summary
+
+  const empty = () => ({ value: 0, dayChangeTRY: 0, prevValueTRY: 0, holdings: [] })
+  const buckets = { bist: empty(), tefas: empty(), global: empty(), cash: empty() }
+
+  // Cash sits in its own bucket with no day-change (it doesn't move).
+  buckets.cash.value = cashTotal
+  // We surface no positions inside Cash — keep it as a simple line.
+
+  for (const h of holdings) {
+    if (!(h.assetType in buckets)) continue
+    const cached = priceCache?.[h.symbol] || {}
+    const prevPrice = isFinite(cached.previousClose) && cached.previousClose > 0
+      ? cached.previousClose
+      : h.currentPrice
+    const prevValueLocal = h.qty * prevPrice
+    const prevValueTRY = convertToTRY(prevValueLocal, h.currency, fxRates)
+    const dayChangeTRY = h.marketValueTRY - prevValueTRY
+
+    const bucket = buckets[h.assetType]
+    bucket.value += h.marketValueTRY
+    bucket.dayChangeTRY += dayChangeTRY
+    bucket.prevValueTRY += prevValueTRY
+    bucket.holdings.push({
+      symbol: h.symbol,
+      qty: h.qty,
+      currency: h.currency,
+      currentPrice: h.currentPrice,
+      avgCost: h.avgCost,
+      marketValueTRY: h.marketValueTRY,
+      costTRY: h.costTRY,
+      plTRY: h.plTRY,
+      plPct: h.plPct,
+      dayChangeTRY,
+      dayChangePct: prevValueTRY > 0 ? (dayChangeTRY / prevValueTRY) * 100 : 0,
+    })
+  }
+
+  return Object.entries(buckets)
+    .filter(([_, v]) => v.value > 0)
+    .map(([key, v]) => ({
+      key,
+      value: v.value,
+      pct: totalValue > 0 ? (v.value / totalValue) * 100 : 0,
+      dayChangeTRY: v.dayChangeTRY,
+      dayChangePct: v.prevValueTRY > 0 ? (v.dayChangeTRY / v.prevValueTRY) * 100 : 0,
+      holdings: v.holdings.sort((a, b) => b.marketValueTRY - a.marketValueTRY),
+    }))
+}
+
 export function computePerformanceSeries(transactions, priceCache, fxRates, months = 6) {
   const now = new Date()
   const series = []
