@@ -154,7 +154,10 @@ async function fetchOne(symbol) {
   }
 }
 
-// Common handler — sequential calls with light pacing
+// Common handler — concurrent calls with a small batch size.
+// Sequential mode could not finish 25-30 symbols within Vercel's 10s hobby-plan
+// timeout (each İş Yatırım call is ~400-800ms). Running 6 in parallel keeps the
+// total under ~3s for typical portfolios while staying polite to the upstream.
 async function handle(symbolsParam) {
   const symbols = (symbolsParam || '')
     .split(',')
@@ -164,24 +167,25 @@ async function handle(symbolsParam) {
   if (symbols.length === 0) {
     return { results: {}, errors: [{ symbol: '', error: 'No symbols provided' }] }
   }
-  if (symbols.length > 30) {
-    return { results: {}, errors: [{ symbol: '', error: 'Max 30 symbols per request' }] }
+  if (symbols.length > 60) {
+    return { results: {}, errors: [{ symbol: '', error: 'Max 60 symbols per request' }] }
   }
 
   const results = {}
   const errors = []
 
-  for (let i = 0; i < symbols.length; i++) {
-    const sym = symbols[i]
-    try {
-      results[sym] = await fetchOne(sym)
-    } catch (err) {
-      errors.push({ symbol: sym, error: err.message || 'failed' })
-    }
-    // 200ms pacing — İş Yatırım is generous, but we stay polite
-    if (i < symbols.length - 1) {
-      await new Promise((r) => setTimeout(r, 200))
-    }
+  const BATCH = 6
+  for (let i = 0; i < symbols.length; i += BATCH) {
+    const batch = symbols.slice(i, i + BATCH)
+    const settled = await Promise.allSettled(batch.map(fetchOne))
+    settled.forEach((s, idx) => {
+      const sym = batch[idx]
+      if (s.status === 'fulfilled') {
+        results[sym] = s.value
+      } else {
+        errors.push({ symbol: sym, error: s.reason?.message || 'failed' })
+      }
+    })
   }
 
   return { results, errors }

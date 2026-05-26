@@ -7,5 +7,6 @@ dist
 
 # Private portfolio backups — never commit real holdings.
 portfolio-backup-*.json
+portfolio-private*.json
 *-private.json
 t3-portfolio*.json
