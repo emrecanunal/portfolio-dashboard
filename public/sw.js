@@ -1,23 +1,36 @@
 // Service worker for Portfolio Dashboard PWA.
 //
 // Strategy:
-//   - App shell (HTML, JS, CSS, icons) → cache-first with background update
-//   - API calls (/api/*) → network-only, never cached (always fresh data)
-//   - External APIs (Frankfurter for FX) → network-only
+//   - Navigations (HTML)     → NETWORK-FIRST, cache as offline fallback
+//   - Hashed build assets    → cache-first (their names change every build, so
+//                              a cached copy can never be stale)
+//   - API calls (/api/*)     → network-only, never cached (always fresh data)
+//   - Cross-origin (fonts,
+//     Frankfurter FX, …)     → untouched, browser handles it
 //
-// Bump CACHE_VERSION when you ship breaking changes — old caches will be
-// purged on the next visit.
+// WHY NETWORK-FIRST FOR HTML (regression guard — do not "optimise" this back):
+// index.html references build assets by content hash (index-a1b2c3.js). Serving
+// a cached index.html after a new deploy makes the browser request an asset
+// filename that no longer exists on the server. vercel.json rewrites every
+// unmatched path to /index.html, so that request returns HTML with a 200 status
+// instead of a 404 — the browser then refuses to execute HTML as a module
+// ("Expected a JavaScript-or-Wasm module script but the server responded with a
+// MIME type of text/html") and the app dies on a white screen. Always going to
+// the network for HTML keeps the document and its asset names in sync.
+//
+// Bump CACHE_VERSION when you ship breaking changes — old caches are purged on
+// the next visit.
 
-const CACHE_VERSION = 'v1'
+const CACHE_VERSION = 'v2'
 const CACHE_NAME = `portfolio-dashboard-${CACHE_VERSION}`
 
-// On install: just activate immediately. We don't pre-cache anything because
-// Vite produces hashed asset names that we don't know ahead of time.
-self.addEventListener('install', (event) => {
+// On install: activate immediately. Nothing is pre-cached because Vite produces
+// hashed asset names that aren't known ahead of time.
+self.addEventListener('install', () => {
   self.skipWaiting()
 })
 
-// On activate: clear out old caches from previous versions
+// On activate: drop caches from previous versions and take over open pages.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
@@ -32,40 +45,82 @@ self.addEventListener('activate', (event) => {
   )
 })
 
-// On fetch: smart routing
+// A response is only safe to cache when it actually is what was asked for.
+// The SPA rewrite can answer a .js/.css request with index.html at status 200;
+// storing that would make the breakage permanent and survive a reload.
+//
+// Note on response.type: Vite emits its bundles with a `crossorigin` attribute,
+// so those requests run in CORS mode and come back as type 'cors' rather than
+// 'basic' — even though they are same-origin. Accepting only 'basic' (as the
+// first version of this file did) silently meant the JS and CSS were never
+// cached at all and offline never worked. The caller already restricts this to
+// our own origin, so allowing 'cors' here is safe. Opaque responses still fail
+// the status check, since they report status 0.
+function isCacheable(request, response) {
+  if (!response || response.status !== 200) return false
+  if (response.type !== 'basic' && response.type !== 'cors') return false
+
+  const contentType = response.headers.get('content-type') || ''
+  const isHtml = contentType.includes('text/html')
+
+  if (request.destination === 'script' || request.destination === 'style') {
+    return !isHtml
+  }
+  return true
+}
+
+async function handleNavigation(request) {
+  const cache = await caches.open(CACHE_NAME)
+  try {
+    const response = await fetch(request)
+    if (isCacheable(request, response)) {
+      cache.put(request, response.clone())
+    }
+    return response
+  } catch {
+    // Offline: fall back to whatever shell we have.
+    const cached = (await cache.match(request)) || (await cache.match('/index.html'))
+    return cached || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } })
+  }
+}
+
+async function handleAsset(request) {
+  const cache = await caches.open(CACHE_NAME)
+  const cached = await cache.match(request)
+
+  if (cached) {
+    // Refresh in the background; the current page keeps the instant response.
+    fetch(request)
+      .then((response) => {
+        if (isCacheable(request, response)) cache.put(request, response.clone())
+      })
+      .catch(() => {})
+    return cached
+  }
+
+  try {
+    const response = await fetch(request)
+    if (isCacheable(request, response)) cache.put(request, response.clone())
+    return response
+  } catch {
+    return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } })
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
 
-  // Only handle GET requests on our own origin
-  if (request.method !== 'GET' || url.origin !== self.location.origin) {
+  // Only our own origin, only GET.
+  if (request.method !== 'GET' || url.origin !== self.location.origin) return
+
+  // Never cache API calls — portfolio prices must always be fresh.
+  if (url.pathname.startsWith('/api/')) return
+
+  if (request.mode === 'navigate') {
+    event.respondWith(handleNavigation(request))
     return
   }
 
-  // NEVER cache API calls — always hit the network for fresh data
-  if (url.pathname.startsWith('/api/')) {
-    return // browser handles normally
-  }
-
-  // App shell: cache-first with background update
-  // (stale-while-revalidate pattern — instant load, refresh in background)
-  event.respondWith(
-    (async () => {
-      const cache = await caches.open(CACHE_NAME)
-      const cached = await cache.match(request)
-
-      const networkPromise = fetch(request)
-        .then((response) => {
-          // Only cache successful responses
-          if (response && response.status === 200 && response.type === 'basic') {
-            cache.put(request, response.clone())
-          }
-          return response
-        })
-        .catch(() => null)
-
-      // Return cached immediately if available, otherwise wait for network
-      return cached || networkPromise || new Response('Offline', { status: 503 })
-    })()
-  )
+  event.respondWith(handleAsset(request))
 })
