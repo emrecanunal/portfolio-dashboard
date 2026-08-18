@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowDownLeft, ArrowUpRight, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowDownLeft, ArrowUpRight, Sparkles, ArrowLeftRight } from 'lucide-react'
 import { useT } from '../../i18n/useT.js'
 import { usePortfolioStore } from '../../lib/store.js'
 import { computePortfolioSummary } from '../../lib/calculations.js'
@@ -13,6 +13,7 @@ const TYPE_OPTIONS = [
   { value: 'sell', icon: ArrowUp, color: 'danger' },
   { value: 'deposit', icon: ArrowDownLeft, color: 'info' },
   { value: 'withdraw', icon: ArrowUpRight, color: 'warning' },
+  { value: 'exchange', icon: ArrowLeftRight, color: 'accent' },
 ]
 
 const ASSET_TYPE_OPTIONS = ['bist', 'tefas', 'global']
@@ -76,14 +77,31 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
     update({ price: val })
   }
 
-  // === Estimated total in TRY ===
-  const txnTotalTRY = useMemo(() => {
+  // Keep the FX pair valid: if the source currency is switched onto the target,
+  // push the target to the first remaining currency so the <select> never ends
+  // up on a value that was filtered out of its own option list.
+  useEffect(() => {
+    if (form.type !== 'exchange') return
+    if (form.currency !== form.toCurrency) return
+    const next = CURRENCY_OPTIONS.find((c) => c !== form.currency)
+    if (next) setForm((prev) => ({ ...prev, toCurrency: next }))
+  }, [form.type, form.currency, form.toCurrency])
+
+  // === Estimated total ===
+  // For an exchange this is the amount leaving the source currency — the
+  // conversion itself is value-neutral, so there is nothing else to total up.
+  const txnLocalTotal = useMemo(() => {
     const qty = parseFloat(form.quantity) || 0
+    if (form.type === 'exchange') return qty
     const price = parseFloat(form.price) || 0
     const fee = parseFloat(form.fee) || 0
-    const local = qty * price + fee
-    return convertToTRY(local, form.currency, settings.fxRates)
-  }, [form.quantity, form.price, form.fee, form.currency, settings.fxRates])
+    return qty * price + fee
+  }, [form.type, form.quantity, form.price, form.fee])
+
+  const txnTotalTRY = useMemo(
+    () => convertToTRY(txnLocalTotal, form.currency, settings.fxRates),
+    [txnLocalTotal, form.currency, settings.fxRates]
+  )
 
   // === Cash warning (only for buys, only when adding NEW txn) ===
   const cashWarning = useMemo(() => {
@@ -133,19 +151,59 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
       }
     }
 
+    const toAmount = parseFloat(form.toAmount)
+    if (form.type === 'exchange') {
+      if (!qty || !toAmount) {
+        setSubmitError(t.txn.pleaseFillRequired)
+        return
+      }
+      if (form.currency === form.toCurrency) {
+        setSubmitError(t.txn.exchangeSameCurrency)
+        return
+      }
+    }
+
     if (cashWarning && !confirmedCashWarning) return
 
-    const tx = {
-      date: form.date,
-      type: form.type,
-      assetType: form.type === 'deposit' || form.type === 'withdraw' ? 'cash' : form.assetType,
-      symbol: form.type === 'deposit' || form.type === 'withdraw' ? 'CASH' : form.symbol.toUpperCase(),
-      quantity: form.type === 'deposit' || form.type === 'withdraw' ? 1 : qty,
-      price,
-      fee: parseFloat(form.fee) || 0,
-      currency: form.currency,
-      portfolioId: form.portfolioId,
-      notes: form.notes,
+    const isCashMove = form.type === 'deposit' || form.type === 'withdraw'
+
+    let tx
+    if (form.type === 'exchange') {
+      tx = {
+        date: form.date,
+        type: 'exchange',
+        // Cash-class so computeHoldings skips it and it never becomes a position.
+        assetType: 'cash',
+        symbol: `${form.currency}→${form.toCurrency}`,
+        quantity: qty,       // amount debited, denominated in `currency`
+        price: 1,            // keeps quantity × price = the source amount for the
+                             // generic total/sort code paths in the txn table
+        fee: 0,              // no separate fee — the FX cost lives in the rate
+        currency: form.currency,
+        toAmount,            // amount credited, denominated in `toCurrency`
+        toCurrency: form.toCurrency,
+        portfolioId: form.portfolioId,
+        notes: form.notes,
+      }
+    } else {
+      tx = {
+        date: form.date,
+        type: form.type,
+        assetType: isCashMove ? 'cash' : form.assetType,
+        symbol: isCashMove ? 'CASH' : form.symbol.toUpperCase(),
+        quantity: isCashMove ? 1 : qty,
+        price,
+        fee: parseFloat(form.fee) || 0,
+        currency: form.currency,
+        portfolioId: form.portfolioId,
+        notes: form.notes,
+      }
+      // updateTransaction shallow-merges, so an exchange retyped as something
+      // else would keep stale FX fields unless we explicitly clear them.
+      if (isEdit && existingTxn.type === 'exchange') {
+        tx.toAmount = null
+        tx.toCurrency = null
+      }
     }
 
     if (isEdit) {
@@ -167,7 +225,7 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
         {/* Type selector */}
         <div>
           <div className="input-label">{t.txn.transactionType}</div>
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
             {TYPE_OPTIONS.map((opt) => {
               const Icon = opt.icon
               const isActive = form.type === opt.value
@@ -353,6 +411,80 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
           </div>
         )}
 
+        {/* Currency exchange — convert between TRY / USD / EUR within a portfolio */}
+        {form.type === 'exchange' && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="input-label">{t.txn.fromAmount} *</label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  className="input-field tabular-nums"
+                  value={form.quantity}
+                  onChange={(e) => update({ quantity: e.target.value })}
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <label className="input-label">{t.txn.fromCurrency}</label>
+                <select
+                  className="input-field"
+                  value={form.currency}
+                  onChange={(e) => update({ currency: e.target.value })}
+                >
+                  {CURRENCY_OPTIONS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="input-label">{t.txn.toAmount} *</label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  className="input-field tabular-nums"
+                  value={form.toAmount}
+                  onChange={(e) => update({ toAmount: e.target.value })}
+                  placeholder="0.00"
+                />
+              </div>
+              <div>
+                <label className="input-label">{t.txn.toCurrency}</label>
+                <select
+                  className="input-field"
+                  value={form.toCurrency}
+                  onChange={(e) => update({ toCurrency: e.target.value })}
+                >
+                  {CURRENCY_OPTIONS.filter((c) => c !== form.currency).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {/* Implied rate hint */}
+            {parseFloat(form.quantity) > 0 && parseFloat(form.toAmount) > 0 && (
+              <div className="bg-bg-tertiary rounded-lg p-3 text-xs text-text-tertiary flex items-center justify-between">
+                <span>{t.txn.impliedRate}</span>
+                <span className="text-text-secondary tabular-nums">
+                  1 {form.currency} = {(parseFloat(form.toAmount) / parseFloat(form.quantity)).toLocaleString('en-US', { maximumFractionDigits: 6 })} {form.toCurrency}
+                </span>
+              </div>
+            )}
+            {/* No fee field: an FX conversion's cost is already baked into the
+                rate the user types, so a separate fee would double-count it. */}
+            <p className="text-2xs text-text-tertiary leading-relaxed">{t.txn.exchangeHint}</p>
+          </>
+        )}
+
         {/* Notes */}
         <div>
           <label className="input-label">{t.txn.notes}</label>
@@ -373,7 +505,7 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
               {formatCurrency(txnTotalTRY, 'TRY', { decimals: 2 })}
               {form.currency !== 'TRY' && (
                 <span className="text-xs text-text-tertiary ml-2">
-                  ({formatCurrency((parseFloat(form.quantity) || 0) * (parseFloat(form.price) || 0) + (parseFloat(form.fee) || 0), form.currency, { decimals: 2 })})
+                  ({formatCurrency(txnLocalTotal, form.currency, { decimals: 2 })})
                 </span>
               )}
             </span>
@@ -451,11 +583,18 @@ function initialForm(subPortfolios, existingTxn, defaultPortfolioId = null) {
       date: existingTxn.date,
       type: existingTxn.type,
       assetType: existingTxn.assetType === 'cash' ? 'bist' : existingTxn.assetType,
-      symbol: existingTxn.symbol === 'CASH' ? '' : existingTxn.symbol,
+      // 'CASH' and the "TRY→USD" pair label are synthetic — never show them in
+      // the symbol field, or retyping the txn would carry them into a position.
+      symbol:
+        existingTxn.symbol === 'CASH' || existingTxn.type === 'exchange'
+          ? ''
+          : existingTxn.symbol,
       quantity: String(existingTxn.quantity || ''),
       price: String(existingTxn.price || ''),
       fee: String(existingTxn.fee || ''),
       currency: existingTxn.currency || 'TRY',
+      toAmount: String(existingTxn.toAmount || ''),
+      toCurrency: existingTxn.toCurrency || 'USD',
       portfolioId: existingTxn.portfolioId,
       notes: existingTxn.notes || '',
     }
@@ -473,6 +612,8 @@ function initialForm(subPortfolios, existingTxn, defaultPortfolioId = null) {
     price: '',
     fee: '',
     currency: 'TRY',
+    toAmount: '',
+    toCurrency: 'USD',
     portfolioId: preferred,
     notes: '',
   }

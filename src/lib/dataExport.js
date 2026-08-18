@@ -93,6 +93,9 @@ export function exportTransactionsCsv(transactions, subPortfolios) {
     'quantity',
     'price',
     'currency',
+    // Populated for type='exchange' only — the credited side of an FX conversion.
+    'to_amount',
+    'to_currency',
     'fee',
     'portfolio',
     'notes',
@@ -111,6 +114,8 @@ export function exportTransactionsCsv(transactions, subPortfolios) {
         tx.quantity,
         tx.price,
         tx.currency,
+        tx.toAmount ?? '',
+        tx.toCurrency ?? '',
         tx.fee || 0,
         portfolioById.get(tx.portfolioId) || tx.portfolioId,
         tx.notes || '',

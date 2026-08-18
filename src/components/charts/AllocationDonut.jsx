@@ -8,6 +8,17 @@ const COLORS = {
   global: '#10b981',
   tefas: '#a855f7',
   cash: '#71717a',
+  cash_TRY: '#6b7280',
+  cash_USD: '#9ca3af',
+  cash_EUR: '#a3a3a3',
+}
+
+// Derive a friendly slice label that handles per-currency cash buckets.
+function labelFor(entry, t) {
+  if (entry.key?.startsWith('cash_')) {
+    return `${t.assets.cash} (${entry.currency || entry.key.replace('cash_', '')})`
+  }
+  return t.assets[entry.key] || entry.key
 }
 
 export function AllocationDonut({ allocation }) {
@@ -24,7 +35,7 @@ export function AllocationDonut({ allocation }) {
   }, [theme])
 
   const data = allocation.map((a) => ({
-    name: t.assets[a.key] || a.key,
+    name: labelFor(a, t),
     key: a.key,
     value: a.value,
     pct: a.pct,

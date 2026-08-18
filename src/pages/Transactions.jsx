@@ -8,7 +8,7 @@ import { AddTransactionModal } from '../components/modals/AddTransactionModal.js
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
 import { cn } from '../lib/utils.js'
 
-const TYPE_FILTERS = ['all', 'buy', 'sell', 'deposit', 'withdraw']
+const TYPE_FILTERS = ['all', 'buy', 'sell', 'deposit', 'withdraw', 'exchange']
 
 export default function Transactions() {
   const { t, ti } = useT()
@@ -259,6 +259,11 @@ export default function Transactions() {
                           {tx.assetType !== 'cash' && (
                             <div className="text-2xs text-text-tertiary mt-0.5">{t.assets[tx.assetType]}</div>
                           )}
+                          {tx.type === 'exchange' && (
+                            <div className="text-2xs text-text-tertiary mt-0.5 tabular-nums">
+                              → {formatCurrency(tx.toAmount || 0, tx.toCurrency || 'USD', { decimals: 2 })}
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-text-secondary whitespace-nowrap">
                           {subPortfolio ? (
@@ -269,10 +274,18 @@ export default function Transactions() {
                           ) : '—'}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums text-text-primary">
-                          {tx.assetType === 'cash' ? '—' : formatNum(tx.quantity)}
+                          {tx.type === 'exchange'
+                            ? formatCurrency(tx.quantity, tx.currency, { decimals: 2 })
+                            : tx.assetType === 'cash'
+                              ? '—'
+                              : formatNum(tx.quantity)}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums text-text-primary whitespace-nowrap">
-                          {formatCurrency(tx.price, tx.currency, { decimals: 2 })}
+                          {/* For an exchange the stored price is a placeholder 1 —
+                              show the rate the two amounts actually imply. */}
+                          {tx.type === 'exchange'
+                            ? formatRate(impliedRate(tx))
+                            : formatCurrency(tx.price, tx.currency, { decimals: 2 })}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums text-text-primary whitespace-nowrap">
                           {formatCurrency(totalTRY, 'TRY', { decimals: 0 })}
@@ -386,7 +399,19 @@ function EmptyState({ hasFilters, t }) {
 }
 
 function typeBadgeVariant(type) {
-  return { buy: 'success', sell: 'danger', deposit: 'info', withdraw: 'warning' }[type] || 'default'
+  return { buy: 'success', sell: 'danger', deposit: 'info', withdraw: 'warning', exchange: 'accent' }[type] || 'default'
+}
+
+// Rate implied by an exchange txn: 1 source unit = N target units.
+function impliedRate(tx) {
+  const from = Number(tx.quantity) || 0
+  const to = Number(tx.toAmount) || 0
+  return from > 0 ? to / from : 0
+}
+
+function formatRate(rate) {
+  if (!rate) return '—'
+  return rate.toLocaleString('en-US', { maximumFractionDigits: 6 })
 }
 
 function formatNum(n) {

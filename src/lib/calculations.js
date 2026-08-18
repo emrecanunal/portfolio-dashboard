@@ -50,6 +50,16 @@ export function computeCashByPortfolio(transactions, fxRates) {
     } else if (tx.type === 'sell') {
       const inflow = convertToTRY(tx.quantity * tx.price - (tx.fee || 0), tx.currency, fxRates)
       cash.set(portfolio, current + inflow)
+    } else if (tx.type === 'exchange') {
+      // FX conversion: outflow in the source currency, inflow in the target.
+      // There is no fee term — the conversion cost is carried by the rate the
+      // user entered, so charging a fee on top would double-count it. In TRY
+      // terms the net is (toAmount in TRY) − (fromAmount in TRY), which is ~0
+      // when the entered rate matches the stored fxRates and slightly negative
+      // when the broker's rate was worse than the reference rate.
+      const out = convertToTRY(tx.quantity || 0, tx.currency, fxRates)
+      const inn = convertToTRY(Number(tx.toAmount) || 0, tx.toCurrency || 'USD', fxRates)
+      cash.set(portfolio, current + inn - out)
     }
   }
   return cash
@@ -59,6 +69,12 @@ export function computeCashByPortfolio(transactions, fxRates) {
 // Returns Map<currency, amountInThatCurrency>, e.g. { TRY: 96475, USD: 3271.99 }.
 // Used by the asset-breakdown widget so TRY and USD cash render as separate
 // rows. portfolioId=null aggregates across all portfolios.
+//
+// Exchange transactions (type='exchange') debit the source currency by
+// `quantity` and credit the target currency (tx.toCurrency) by `tx.toAmount`.
+// This represents an in-portfolio FX conversion at the broker. No fee is
+// applied — the spread is already reflected in the rate implied by the two
+// amounts the user entered.
 export function computeCashByCurrency(transactions, portfolioId = null) {
   const cash = new Map()
   for (const tx of transactions) {
@@ -76,6 +92,13 @@ export function computeCashByCurrency(transactions, portfolioId = null) {
       cash.set(ccy, current - localGross - fee)
     } else if (tx.type === 'sell') {
       cash.set(ccy, current + localGross - fee)
+    } else if (tx.type === 'exchange') {
+      // Debit source currency by the amount converted (in source units)
+      cash.set(ccy, current - (tx.quantity || 0))
+      // Credit target currency by toAmount
+      const toCcy = tx.toCurrency || 'USD'
+      const toAmount = Number(tx.toAmount) || 0
+      cash.set(toCcy, (cash.get(toCcy) || 0) + toAmount)
     }
   }
   return cash
@@ -130,19 +153,59 @@ export function computePortfolioSummary(transactions, priceCache, fxRates, portf
   }
 }
 
-export function computeAllocation(summary) {
+// Donut allocation. Investment buckets (bist/tefas/global) carry their TRY
+// market value; cash splits into one bucket per currency (cash_TRY, cash_USD,
+// cash_EUR, ...) so the donut and legend can show each cash type separately.
+// Pass `cashByCurrency` (Map<ccy, amount>) and `fxRates` to enable the split.
+// Without them, cash collapses into the legacy single 'cash' bucket.
+export function computeAllocation(summary, cashByCurrency = null, fxRates = null) {
   const { holdings, cashTotal, totalValue } = summary
-  const buckets = { bist: 0, tefas: 0, global: 0, cash: cashTotal }
+  const buckets = { bist: 0, tefas: 0, global: 0 }
   for (const h of holdings) {
     if (h.assetType in buckets) buckets[h.assetType] += h.marketValueTRY
   }
-  return Object.entries(buckets)
+
+  const result = Object.entries(buckets)
     .filter(([_, v]) => v > 0)
     .map(([key, value]) => ({
       key,
       value,
       pct: totalValue > 0 ? (value / totalValue) * 100 : 0,
     }))
+
+  if (cashByCurrency && fxRates) {
+    // One slice per currency, sorted TRY → USD → EUR → others alphabetically.
+    const CURRENCY_ORDER = ['TRY', 'USD', 'EUR']
+    const ccys = [...cashByCurrency.keys()].sort((a, b) => {
+      const ai = CURRENCY_ORDER.indexOf(a)
+      const bi = CURRENCY_ORDER.indexOf(b)
+      if (ai === -1 && bi === -1) return a.localeCompare(b)
+      if (ai === -1) return 1
+      if (bi === -1) return -1
+      return ai - bi
+    })
+    for (const ccy of ccys) {
+      const amount = cashByCurrency.get(ccy)
+      if (!amount || amount <= 0) continue
+      const trEquivalent = convertToTRY(amount, ccy, fxRates)
+      result.push({
+        key: `cash_${ccy}`,
+        currency: ccy,
+        nativeValue: amount,
+        value: trEquivalent,
+        pct: totalValue > 0 ? (trEquivalent / totalValue) * 100 : 0,
+      })
+    }
+  } else if (cashTotal > 0) {
+    // Legacy callers (no cashByCurrency) still get the combined bucket.
+    result.push({
+      key: 'cash',
+      value: cashTotal,
+      pct: totalValue > 0 ? (cashTotal / totalValue) * 100 : 0,
+    })
+  }
+
+  return result
 }
 
 // Detailed breakdown for the AllocationBreakdown widget.

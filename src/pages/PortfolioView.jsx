@@ -63,13 +63,17 @@ export function PortfolioView({ scope = { type: 'master' } }) {
     [transactions, priceCache, settings.fxRates, portfolioId]
   )
 
-  const allocation = useMemo(() => computeAllocation(summary), [summary])
-
-  // Per-currency cash split (TRY, USD, EUR, …) — feeds the breakdown widget
-  // so it can show e.g. "$3.272" and "₺96.475" as separate rows.
+  // Per-currency cash split (TRY, USD, EUR, …) — feeds both the donut and the
+  // breakdown widget so they can show e.g. "$3.272" and "₺96.475" as separate
+  // rows/slices.
   const cashByCurrency = useMemo(
     () => computeCashByCurrency(transactions, portfolioId),
     [transactions, portfolioId]
+  )
+
+  const allocation = useMemo(
+    () => computeAllocation(summary, cashByCurrency, settings.fxRates),
+    [summary, cashByCurrency, settings.fxRates]
   )
 
   const allocationDetail = useMemo(
