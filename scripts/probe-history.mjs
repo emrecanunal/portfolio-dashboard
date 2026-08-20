@@ -25,7 +25,7 @@
 //   FINNHUB_KEY=xxx npm run probe:history
 
 import { historyHandle } from '../api/history.js'
-import { warmUpYahooCookies, yahooCookieState } from '../api/_http.js'
+import { warmUpYahooCookies, yahooCookieState, yahooCrumb } from '../api/_http.js'
 import { buildWindows, fetchFinnhubMonthlyHistory } from '../src/lib/historyApi.js'
 
 const args = process.argv.slice(2)
@@ -98,13 +98,23 @@ if (firstOk) {
 if (rows.some((r) => r.type === 'global' && !r.ok)) {
   await warmUpYahooCookies()
   const jar = yahooCookieState()
+  await yahooCrumb()
+  const state = yahooCookieState()
   console.log(
-    `\nYahoo cookie jar: ${
-      jar.hasCookies
-        ? `obtained (${jar.length} chars) — so Yahoo is refusing us even with cookies`
-        : 'EMPTY — the fc.yahoo.com warm-up itself failed, which is the real problem'
+    `\nYahoo cookies: ${
+      state.hasCookies ? `obtained (${state.length} chars)` : 'EMPTY — the warm-up itself failed'
     }`
   )
+  console.log(
+    `Yahoo crumb:   ${
+      state.hasCrumb
+        ? `obtained (${state.crumbLength} chars)`
+        : 'EMPTY — Yahoo would not issue one, so the chart API stays closed to us'
+    }`
+  )
+  if (state.hasCookies && state.hasCrumb) {
+    console.log('  → both present; if the fetch still fails, Yahoo is blocking this address.')
+  }
 
   const key = process.env.FINNHUB_KEY
   if (key) {

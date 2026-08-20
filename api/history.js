@@ -33,7 +33,14 @@
 //           api/bist.js as a fallback, so it is at least a known quantity.
 //           Run `npm run probe:history` to confirm before relying on it.
 
-import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols, yahooHeaders } from './_http.js'
+import {
+  fetchWithTimeout,
+  setCacheHeaders,
+  applyCors,
+  parseSymbols,
+  yahooHeaders,
+  withYahooCrumb,
+} from './_http.js'
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
@@ -137,10 +144,12 @@ async function globalHistory(symbol, months, window) {
   // hosts are tried: they are separate front-ends and have historically
   // rate-limited independently.
   const headers = await yahooHeaders()
+  // Cookie AND crumb. A jar on its own earned a 429 in the August 2026 probe.
+  const authedUrl = await withYahooCrumb(url)
   let res = null
   let lastStatus = 0
   for (const host of ['query1', 'query2']) {
-    const attempt = await fetchWithTimeout(url.replace('query1', host), { headers }, 9000)
+    const attempt = await fetchWithTimeout(authedUrl.replace('query1', host), { headers }, 9000)
     lastStatus = attempt.status
     if (attempt.ok) {
       res = attempt

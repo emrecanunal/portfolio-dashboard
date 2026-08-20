@@ -84,7 +84,7 @@ export function buildWindows(months, size, now = new Date()) {
 }
 
 const WINDOW_MONTHS = {
-  bist: 12, // measured: 12 months costs the same as 1 (~0.3s)
+  bist: 36, // measured: 1→36 months all return in 0.0–0.4s
   global: 24, // Yahoo returns monthly candles, so width is nearly free
   tefas: 60, // one request already spans 60 months; it rate-limits at 6/min
 }

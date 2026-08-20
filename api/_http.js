@@ -99,12 +99,18 @@ const COOKIE_TTL_MS = 60 * 60 * 1000
 
 let _cookieJar = null
 let _cookieFetchedAt = 0
+let _crumb = null
 
-// Exposed so probe-history.mjs can report whether a jar was actually
-// obtained — "Yahoo is blocking us" and "our warm-up silently returned
-// nothing" look identical from the outside otherwise.
+// Exposed so probe-history.mjs can report what was actually obtained.
+// "Yahoo is blocking us", "the warm-up returned nothing" and "we have cookies
+// but no crumb" look identical from the calling side otherwise.
 export function yahooCookieState() {
-  return { hasCookies: Boolean(_cookieJar), length: _cookieJar ? _cookieJar.length : 0 }
+  return {
+    hasCookies: Boolean(_cookieJar),
+    length: _cookieJar ? _cookieJar.length : 0,
+    hasCrumb: Boolean(_crumb),
+    crumbLength: _crumb ? _crumb.length : 0,
+  }
 }
 
 export async function warmUpYahooCookies() {
@@ -139,4 +145,45 @@ export async function yahooHeaders() {
     Referer: 'https://finance.yahoo.com/',
     ...(cookies ? { Cookie: cookies } : {}),
   }
+}
+
+// A cookie alone stopped being enough: Yahoo now pairs it with a short
+// per-session token — the "crumb" — that has to travel in the query string.
+// The August 2026 probe got a 97-character jar and a 429 anyway, which is
+// exactly what a missing crumb looks like.
+//
+// Returns '' when the crumb cannot be fetched, so callers degrade to the
+// cookie-only request rather than failing outright.
+export async function yahooCrumb() {
+  if (_crumb) return _crumb
+  const cookies = await warmUpYahooCookies()
+  if (!cookies) return ''
+  try {
+    const res = await fetchWithTimeout(
+      'https://query1.finance.yahoo.com/v1/test/getcrumb',
+      {
+        headers: {
+          'User-Agent': YAHOO_UA,
+          Accept: 'text/plain,*/*',
+          Referer: 'https://finance.yahoo.com/',
+          Cookie: cookies,
+        },
+      },
+      4000
+    )
+    if (!res.ok) return ''
+    const text = (await res.text()).trim()
+    // A valid crumb is a short opaque token; an error page is neither short
+    // nor opaque, so reject anything that looks like markup.
+    _crumb = text && text.length < 40 && !text.includes('<') ? text : ''
+    return _crumb
+  } catch {
+    return ''
+  }
+}
+
+/** Append the crumb to a Yahoo URL, if one could be obtained. */
+export async function withYahooCrumb(url) {
+  const crumb = await yahooCrumb()
+  return crumb ? `${url}&crumb=${encodeURIComponent(crumb)}` : url
 }
