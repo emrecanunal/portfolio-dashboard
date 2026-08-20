@@ -1,4 +1,11 @@
 // Realistic demo data so the app shows something interesting on first launch.
+//
+// KEEP IT INTERNALLY CONSISTENT: every portfolio must deposit at least as much
+// as it spends. The dashboard now runs computeDataWarnings() over whatever is
+// loaded, so a demo portfolio that buys more than it deposits greets every new
+// user with "cash is below zero — a deposit is probably missing". It did
+// exactly that until August 2026 (Global deposited $4,000 and bought $8,652).
+// demoData.test.js fails if this drifts again.
 
 export const demoSubPortfolios = [
   { id: 'sub-mixed', name: 'Mixed', color: '#10b981' },
@@ -34,8 +41,8 @@ function daysAgo(n) {
 export const demoTransactions = [
   { id: 't1',  date: daysAgo(180), type: 'deposit',  assetType: 'cash',   symbol: 'CASH', quantity: 1, price: 200000, fee: 0, currency: 'TRY', portfolioId: 'sub-mixed',     notes: 'Initial deposit' },
   { id: 't2',  date: daysAgo(180), type: 'deposit',  assetType: 'cash',   symbol: 'CASH', quantity: 1, price: 150000, fee: 0, currency: 'TRY', portfolioId: 'sub-t3',         notes: 'Initial deposit' },
-  { id: 't3',  date: daysAgo(180), type: 'deposit',  assetType: 'cash',   symbol: 'CASH', quantity: 1, price: 120000, fee: 0, currency: 'TRY', portfolioId: 'sub-claude-t3',  notes: 'Initial deposit' },
-  { id: 't4',  date: daysAgo(180), type: 'deposit',  assetType: 'cash',   symbol: 'CASH', quantity: 1, price: 4000,   fee: 0, currency: 'USD', portfolioId: 'sub-global',     notes: 'Initial USD deposit' },
+  { id: 't3',  date: daysAgo(180), type: 'deposit',  assetType: 'cash',   symbol: 'CASH', quantity: 1, price: 200000, fee: 0, currency: 'TRY', portfolioId: 'sub-claude-t3',  notes: 'Initial deposit' },
+  { id: 't4',  date: daysAgo(180), type: 'deposit',  assetType: 'cash',   symbol: 'CASH', quantity: 1, price: 9500,   fee: 0, currency: 'USD', portfolioId: 'sub-global',     notes: 'Initial USD deposit' },
 
   { id: 't5',  date: daysAgo(170), type: 'buy', assetType: 'bist', symbol: 'ASELS', quantity: 800,  price: 62.50, fee: 35,  currency: 'TRY', portfolioId: 'sub-mixed',    notes: '' },
   { id: 't6',  date: daysAgo(160), type: 'buy', assetType: 'bist', symbol: 'THYAO', quantity: 200,  price: 245.00, fee: 28, currency: 'TRY', portfolioId: 'sub-mixed',    notes: '' },

@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:tz": "TZ=Pacific/Auckland vitest run && TZ=America/Los_Angeles vitest run",
-    "probe:funds": "node scripts/probe-fund-sources.mjs"
+    "probe:funds": "node scripts/probe-fund-sources.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
