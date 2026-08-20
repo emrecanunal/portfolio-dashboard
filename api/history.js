@@ -1,7 +1,15 @@
 // Month-end price history, for seeding the performance chart's archive.
 //
-//   GET /api/history?type=bist|tefas|global&symbols=THYAO,ASELS&months=60
+//   GET /api/history?type=bist|tefas|global&symbols=THYAO,ASELS&months=12
+//   GET /api/history?type=bist&symbols=THYAO&from=2024-01&to=2024-06
 //   → { results: { THYAO: { '2024-01': 280.5, ... } }, errors: [], source }
+//
+// WINDOWS, NOT WHOLE HISTORIES. Asking İş Yatırım for twelve months in one go
+// took over nine seconds in the August 2026 probe — past this function's own
+// deadline, never mind Vercel's ten-second ceiling. So a request covers a
+// bounded window and the CLIENT walks the range (see historyApi.js), which
+// also gives it something honest to show a progress bar with. Symbols within
+// one window are fetched in parallel, the same way live BIST prices are.
 //
 // One closing price per calendar month, in the symbol's own currency. Daily
 // rows are collapsed by taking the LAST trading day of each month, which is
@@ -25,13 +33,16 @@
 //           api/bist.js as a fallback, so it is at least a known quantity.
 //           Run `npm run probe:history` to confirm before relying on it.
 
-import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols } from './_http.js'
+import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols, yahooHeaders } from './_http.js'
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
 const MAX_SYMBOLS = 12
 const MAX_MONTHS = 60
+// How many symbols to have in flight at once. Matches the live BIST endpoint,
+// which has run at six in parallel against İş Yatırım without complaint.
+const CONCURRENCY = 6
 
 // Collapse dated points into one value per month, keeping the latest date in
 // each. Input: [{ ymd: '2026-07-31', value: 1.27 }, ...] in any order.
@@ -57,7 +68,7 @@ function snapPeriod(months) {
   return TEFAS_PERIODS.find((p) => p >= months) ?? 60
 }
 
-async function tefasHistory(code, months) {
+async function tefasHistory(code, months, _window) {
   const res = await fetchWithTimeout(
     'https://www.tefas.gov.tr/api/funds/fonFiyatBilgiGetir',
     {
@@ -88,13 +99,12 @@ function isYatirimDate(date) {
   return `${d}-${m}-${date.getFullYear()}`
 }
 
-async function bistHistory(symbol, months) {
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth() - months, 1)
+async function bistHistory(symbol, months, window) {
+  const { start, end } = resolveWindow(months, window)
   const url =
     'https://www.isyatirim.com.tr/_layouts/15/Isyatirim.Website/Common/Data.aspx/HisseTekil' +
     `?hisse=${encodeURIComponent(symbol)}` +
-    `&startdate=${isYatirimDate(start)}&enddate=${isYatirimDate(now)}`
+    `&startdate=${isYatirimDate(start)}&enddate=${isYatirimDate(end)}`
 
   const res = await fetchWithTimeout(
     url,
@@ -113,23 +123,18 @@ async function bistHistory(symbol, months) {
 
 // === Global (Yahoo, monthly candles) ===
 
-async function globalHistory(symbol, months) {
-  const range = months <= 12 ? '1y' : months <= 24 ? '2y' : months <= 60 ? '5y' : '10y'
+async function globalHistory(symbol, months, window) {
+  const { start, end } = resolveWindow(months, window)
+  // period1/period2 rather than range=, so a windowed request asks for exactly
+  // the months the client is walking.
   const url =
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
-    `?interval=1mo&range=${range}`
+    `?interval=1mo&period1=${Math.floor(start.getTime() / 1000)}` +
+    `&period2=${Math.floor(end.getTime() / 1000)}`
 
-  const res = await fetchWithTimeout(
-    url,
-    {
-      headers: {
-        'User-Agent': UA,
-        Accept: 'application/json,text/plain,*/*',
-        Referer: 'https://finance.yahoo.com/',
-      },
-    },
-    9000
-  )
+  // Yahoo answers 429 to a request that arrives with no cookies. yahooHeaders()
+  // warms a jar first — this is why the first probe run came back RATE_LIMIT.
+  const res = await fetchWithTimeout(url, { headers: await yahooHeaders() }, 9000)
   if (res.status === 429) throw new Error('YH_RATE_LIMIT')
   if (!res.ok) throw new Error(`YH_HTTP_${res.status}`)
 
@@ -171,12 +176,28 @@ export function toNumber(value) {
   return isFinite(n) ? n : 0
 }
 
+// Turn either form of request — `months=12` or `from=2024-01&to=2024-06` —
+// into a concrete pair of Dates.
+export function resolveWindow(months, window, now = new Date()) {
+  if (window?.from && window?.to) {
+    const [fy, fm] = window.from.split('-').map(Number)
+    const [ty, tm] = window.to.split('-').map(Number)
+    return {
+      start: new Date(fy, fm - 1, 1),
+      // Day 0 of the following month is the last day of `to`.
+      end: new Date(ty, tm, 0),
+    }
+  }
+  return { start: new Date(now.getFullYear(), now.getMonth() - months, 1), end: now }
+}
+
 const FETCHERS = { tefas: tefasHistory, bist: bistHistory, global: globalHistory }
 
-// Sequential with pacing. Backfill is a rare, deliberate action — there is no
-// reason to hammer a source that is doing us a favour, and TEFAS in particular
-// allows only about six requests a minute.
-async function handle(type, symbolsParam, monthsParam) {
+// TEFAS stays sequential: it allows roughly six requests a minute, and one
+// request already covers up to sixty months so there is nothing to gain.
+// BIST and Yahoo go in parallel batches — a windowed request is short, and
+// serialising twelve of them would blow the function's deadline.
+async function handle(type, symbolsParam, monthsParam, window) {
   const fetcher = FETCHERS[type]
   if (!fetcher) {
     return { results: {}, errors: [{ symbol: '', error: `Unknown type "${type}"` }] }
@@ -186,20 +207,36 @@ async function handle(type, symbolsParam, monthsParam) {
   if (parsed.error) return { results: {}, errors: [{ symbol: '', error: parsed.error }] }
 
   const months = Math.min(MAX_MONTHS, Math.max(1, Number(monthsParam) || 12))
-  const pacing = type === 'tefas' ? 350 : 150
-
   const results = {}
   const errors = []
-  for (const sym of parsed.symbols) {
-    try {
-      const months_ = await fetcher(sym, months)
-      if (Object.keys(months_).length === 0) throw new Error('NO_MONTHS')
-      results[sym] = months_
-    } catch (err) {
-      errors.push({ symbol: sym, error: err.message || 'failed' })
-    }
-    await new Promise((r) => setTimeout(r, pacing))
+
+  const run = async (sym) => {
+    const got = await fetcher(sym, months, window)
+    if (Object.keys(got).length === 0) throw new Error('NO_MONTHS')
+    return got
   }
+
+  if (type === 'tefas') {
+    for (const sym of parsed.symbols) {
+      try {
+        results[sym] = await run(sym)
+      } catch (err) {
+        errors.push({ symbol: sym, error: err.message || 'failed' })
+      }
+      await new Promise((r) => setTimeout(r, 350))
+    }
+  } else {
+    for (let i = 0; i < parsed.symbols.length; i += CONCURRENCY) {
+      const batch = parsed.symbols.slice(i, i + CONCURRENCY)
+      const settled = await Promise.allSettled(batch.map(run))
+      settled.forEach((r, idx) => {
+        const sym = batch[idx]
+        if (r.status === 'fulfilled') results[sym] = r.value
+        else errors.push({ symbol: sym, error: r.reason?.message || 'failed' })
+      })
+    }
+  }
+
   return { results, errors, source: type }
 }
 
@@ -207,10 +244,13 @@ export default async function handler(req, res) {
   if (applyCors(req, res)) return
   try {
     const url = new URL(req.url, `http://${req.headers.host}`)
+    const from = url.searchParams.get('from')
+    const to = url.searchParams.get('to')
     const data = await handle(
       url.searchParams.get('type') || '',
       url.searchParams.get('symbols') || '',
-      url.searchParams.get('months')
+      url.searchParams.get('months'),
+      from && to ? { from, to } : null
     )
     // A month-end close from the past never changes. Cache it hard.
     setCacheHeaders(res, { maxAge: 21600, swr: 86400 })

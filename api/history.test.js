@@ -3,7 +3,7 @@
 // line, just with the wrong number in it — so it is pinned down here.
 
 import { describe, it, expect } from 'vitest'
-import { toMonthEnds, normaliseYmd, toNumber } from './history.js'
+import { toMonthEnds, normaliseYmd, toNumber, resolveWindow } from './history.js'
 
 describe('toMonthEnds', () => {
   it('keeps the last trading day of each month', () => {
@@ -99,5 +99,36 @@ describe('toNumber', () => {
     expect(toNumber(null)).toBe(0)
     expect(toNumber('abc')).toBe(0)
     expect(toNumber(Infinity)).toBe(0)
+  })
+})
+
+describe('resolveWindow', () => {
+  const NOW = new Date(2026, 7, 20) // 20 Aug 2026, local
+
+  it('turns a from/to pair into the first and last day of that span', () => {
+    const { start, end } = resolveWindow(12, { from: '2024-01', to: '2024-06' }, NOW)
+    expect(start.getFullYear()).toBe(2024)
+    expect(start.getMonth()).toBe(0)
+    expect(start.getDate()).toBe(1)
+    // June has 30 days — day 0 of July.
+    expect(end.getMonth()).toBe(5)
+    expect(end.getDate()).toBe(30)
+  })
+
+  it('lands on the real last day of a 31-day month', () => {
+    const { end } = resolveWindow(1, { from: '2024-07', to: '2024-07' }, NOW)
+    expect(end.getDate()).toBe(31)
+  })
+
+  it('handles February in a leap year', () => {
+    const { end } = resolveWindow(1, { from: '2024-02', to: '2024-02' }, NOW)
+    expect(end.getDate()).toBe(29)
+  })
+
+  it('falls back to a months-back span when no window is given', () => {
+    const { start, end } = resolveWindow(6, null, NOW)
+    expect(start.getFullYear()).toBe(2026)
+    expect(start.getMonth()).toBe(1) // February
+    expect(end).toBe(NOW)
   })
 })

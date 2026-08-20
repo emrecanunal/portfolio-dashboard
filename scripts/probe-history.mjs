@@ -11,12 +11,18 @@
 // source blocks data-centre IPs and no retry will help; "fails in both" means
 // the source moved and the parser needs updating.
 //
-// The one to watch is `global`. TEFAS and BIST reuse endpoints the live price
-// path already proves every day, but global history goes to Yahoo, which is a
-// new dependency — Finnhub's free tier does not reliably expose historical
-// candles and Stooq closed its free CSV in March 2026.
+// Two things this measures, both learned the hard way in the first run:
+//
+//   * How wide a window İş Yatırım will actually serve. Twelve months for one
+//     symbol took over nine seconds — past Vercel's ceiling. The sweep below
+//     finds where the cliff is, so WINDOW_MONTHS in historyApi.js can be set
+//     from evidence rather than guessed.
+//   * Whether Yahoo answers at all. It 429s any request that arrives without
+//     cookies, which is what the first run hit; api/_http.js now warms a jar
+//     first, exactly as the BIST fallback has always done.
 
 import { historyHandle } from '../api/history.js'
+import { buildWindows } from '../src/lib/historyApi.js'
 
 const args = process.argv.slice(2)
 const monthsIdx = args.indexOf('--months')
@@ -37,8 +43,10 @@ console.log(`\nProbing ${months} months of history · ${new Date().toISOString()
 const rows = []
 for (const [type, symbol] of plan) {
   const started = Date.now()
+  const sizes = { bist: 6, global: 24, tefas: 60 }
+  const [firstWindow] = buildWindows(months, sizes[type] ?? 6)
   try {
-    const { results, errors } = await historyHandle(type, symbol, months)
+    const { results, errors } = await historyHandle(type, symbol, months, firstWindow)
     const monthsGot = results[symbol] ? Object.keys(results[symbol]) : []
     rows.push({
       type,
@@ -76,6 +84,28 @@ if (firstOk) {
   console.log(`\n${firstOk.type}/${firstOk.symbol} month-end closes:`)
   for (const [month, price] of Object.entries(firstOk.sample)) {
     console.log(`  ${month}  ${price}`)
+  }
+}
+
+// --- How wide a window will İş Yatırım serve? ---------------------------
+// Each size is timed for ONE symbol. Anything approaching 9s is unusable in
+// production: Vercel kills the function at 10s and several symbols share it.
+if (!symbols.length) {
+  console.log('\nİş Yatırım window sweep (one symbol, seconds per window size):')
+  for (const size of [1, 3, 6, 12]) {
+    const [w] = buildWindows(size, size)
+    const started = Date.now()
+    let note
+    try {
+      const { results, errors } = await historyHandle('bist', DEFAULTS.bist, size, w)
+      const got = results[DEFAULTS.bist]
+      note = got ? `${Object.keys(got).length} months` : errors[0]?.error || 'no data'
+    } catch (err) {
+      note = err.message
+    }
+    const secs = ((Date.now() - started) / 1000).toFixed(1)
+    const verdict = Number(secs) > 6 ? '  ← too slow for Vercel' : ''
+    console.log(`  ${String(size).padStart(2)} months  ${secs.padStart(5)}s  ${note}${verdict}`)
   }
 }
 

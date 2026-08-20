@@ -81,3 +81,55 @@ export function parseSymbols(symbolsParam, max) {
   if (unique.length > max) return { error: `Max ${max} symbols per request` }
   return { symbols: unique }
 }
+
+// === Yahoo Finance ===
+//
+// Yahoo answers 429 to requests that arrive with no cookies, so every caller
+// has to be handed a jar first. This lived in api/bist.js, where it was written
+// for the BIST fallback; api/history.js then asked Yahoo for monthly candles
+// without it and got rate-limited on the first call. Shared, so the next
+// endpoint that needs Yahoo cannot repeat that.
+//
+// The jar is per serverless instance and short-lived, which is fine: a cold
+// instance simply warms up again.
+
+const YAHOO_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+const COOKIE_TTL_MS = 60 * 60 * 1000
+
+let _cookieJar = null
+let _cookieFetchedAt = 0
+
+export async function warmUpYahooCookies() {
+  if (_cookieJar && Date.now() - _cookieFetchedAt < COOKIE_TTL_MS) return _cookieJar
+  try {
+    const res = await fetchWithTimeout(
+      'https://fc.yahoo.com',
+      { headers: { 'User-Agent': YAHOO_UA, Accept: 'text/html,*/*' }, redirect: 'manual' },
+      4000
+    )
+    let setCookieHeaders = []
+    if (typeof res.headers.getSetCookie === 'function') {
+      setCookieHeaders = res.headers.getSetCookie()
+    } else {
+      const all = res.headers.get('set-cookie')
+      if (all) setCookieHeaders = all.split(/,(?=\s*\w+=)/)
+    }
+    _cookieJar = setCookieHeaders.map((c) => c.split(';')[0].trim()).filter(Boolean).join('; ')
+    _cookieFetchedAt = Date.now()
+  } catch {
+    _cookieJar = ''
+  }
+  return _cookieJar
+}
+
+/** Headers a Yahoo chart request needs to avoid an instant 429. */
+export async function yahooHeaders() {
+  const cookies = await warmUpYahooCookies()
+  return {
+    'User-Agent': YAHOO_UA,
+    Accept: 'application/json,text/plain,*/*',
+    Referer: 'https://finance.yahoo.com/',
+    ...(cookies ? { Cookie: cookies } : {}),
+  }
+}

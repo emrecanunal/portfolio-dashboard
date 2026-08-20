@@ -48,21 +48,49 @@ export async function fetchFxHistory(fromYmd, toYmd) {
   return out
 }
 
-// Month-end closes for a set of symbols of one asset type.
-async function fetchPriceHistoryFor(type, symbols, months) {
+// Month-end closes for one asset type, over one bounded window.
+async function fetchWindow(type, symbols, window) {
   if (symbols.length === 0) return { results: {}, errors: [] }
-  const url = `/api/history?type=${type}&symbols=${encodeURIComponent(symbols.join(','))}&months=${months}`
+  const url =
+    `/api/history?type=${type}&symbols=${encodeURIComponent(symbols.join(','))}` +
+    `&from=${window.from}&to=${window.to}`
   const res = await fetch(url, { headers: { Accept: 'application/json' } })
   if (!res.ok) throw new Error(`History proxy HTTP ${res.status}`)
   const data = await res.json()
   return { results: data.results || {}, errors: data.errors || [] }
 }
 
-// Backfill every held symbol, one asset type at a time.
+// Split a span of months into windows.
 //
-// The endpoint caps each request at 12 symbols, so long lists are chunked.
-// onProgress(type, done, total) drives the button's label — a backfill can take
-// the better part of a minute and a silent button looks broken.
+// İş Yatırım needed over nine seconds to return twelve months for ONE symbol,
+// which is past Vercel's ceiling — so the range is walked in short windows
+// rather than asked for in one go. TEFAS is the exception: one request already
+// covers up to sixty months, and it rate-limits at about six requests a
+// minute, so chunking it would be strictly worse.
+export function buildWindows(months, size, now = new Date()) {
+  const windows = []
+  const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  for (let offset = months - 1; offset >= 0; offset -= size) {
+    const from = new Date(now.getFullYear(), now.getMonth() - offset, 1)
+    const toOffset = Math.max(0, offset - size + 1)
+    const to = new Date(now.getFullYear(), now.getMonth() - toOffset, 1)
+    windows.push({ from: monthKey(from), to: monthKey(to) })
+  }
+  return windows
+}
+
+const WINDOW_MONTHS = { bist: 6, global: 24, tefas: 60 }
+
+// Merge a window's results into the accumulator without losing earlier months.
+function absorb(into, incoming) {
+  for (const [symbol, months] of Object.entries(incoming)) {
+    into[symbol] = { ...into[symbol], ...months }
+  }
+}
+
+// Backfill every held symbol, one asset type at a time, walking the range in
+// windows. onProgress(type, done, total) drives the button label — a backfill
+// can take a minute and a silent button looks broken.
 export async function fetchPriceHistory({ holdings, months = 60, onProgress }) {
   const byType = { bist: [], tefas: [], global: [] }
   for (const h of holdings) {
@@ -75,29 +103,43 @@ export async function fetchPriceHistory({ holdings, months = 60, onProgress }) {
 
   for (const [type, symbols] of Object.entries(byType)) {
     if (symbols.length === 0) continue
+
+    const windows = buildWindows(months, WINDOW_MONTHS[type] ?? 6)
     const chunks = []
     for (let i = 0; i < symbols.length; i += 12) chunks.push(symbols.slice(i, i + 12))
+    const steps = windows.length * chunks.length
 
     let done = 0
-    onProgress?.(type, 0, symbols.length)
-    try {
+    let failure = null
+    onProgress?.(type, 0, steps)
+
+    for (const window of windows) {
       for (const chunk of chunks) {
-        const r = await fetchPriceHistoryFor(type, chunk, months)
-        Object.assign(results, r.results)
-        errors.push(...r.errors)
-        done += chunk.length
-        onProgress?.(type, done, symbols.length)
+        try {
+          const r = await fetchWindow(type, chunk, window)
+          absorb(results, r.results)
+          // One window failing for a symbol is normal — it may simply predate
+          // the listing. Only report a symbol as failed if it ends up with no
+          // months at all, which is checked after every window has run.
+          if (r.errors.length) failure = failure || r.errors[0].error
+        } catch (err) {
+          // A whole window failing (proxy down, source moved) must not abandon
+          // the windows and types that would otherwise succeed.
+          failure = failure || err.message
+        }
+        done += 1
+        onProgress?.(type, done, steps)
       }
-      sourceStats[type] = {
-        ok: symbols.filter((s) => results[s]).length,
-        failed: symbols.filter((s) => !results[s]).length,
-      }
-    } catch (err) {
-      // A whole type failing (proxy down, source moved) must not abandon the
-      // types that already succeeded.
-      sourceStats[type] = { ok: 0, failed: symbols.length, error: err.message }
-      errors.push(...symbols.map((s) => ({ symbol: s, error: err.message })))
     }
+
+    const got = symbols.filter((s) => results[s] && Object.keys(results[s]).length > 0)
+    const missing = symbols.filter((s) => !got.includes(s))
+    sourceStats[type] = {
+      ok: got.length,
+      failed: missing.length,
+      ...(missing.length && failure ? { error: failure } : {}),
+    }
+    errors.push(...missing.map((s) => ({ symbol: s, error: failure || 'no months returned' })))
   }
 
   return { results, errors, sourceStats }

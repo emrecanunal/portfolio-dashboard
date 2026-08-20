@@ -11,7 +11,7 @@
 //   - Used only if İş Yatırım fails or returns no data
 //   - More fragile (rate limits, 403/429 errors) — see comments below
 
-import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols } from './_http.js'
+import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols, yahooHeaders } from './_http.js'
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
@@ -84,46 +84,13 @@ async function fetchIsYatirim(symbol) {
   }
 }
 
-// === Fallback: Yahoo (kept as backup, though usually not needed) ===
-let _cookieJar = null
-let _cookieFetchedAt = 0
-const COOKIE_TTL_MS = 60 * 60 * 1000
-
-async function warmUpYahooCookies() {
-  if (_cookieJar && Date.now() - _cookieFetchedAt < COOKIE_TTL_MS) return _cookieJar
-  try {
-    const res = await fetchWithTimeout('https://fc.yahoo.com', {
-      headers: { 'User-Agent': UA, Accept: 'text/html,*/*' },
-      redirect: 'manual',
-    }, 4000)
-    let setCookieHeaders = []
-    if (typeof res.headers.getSetCookie === 'function') {
-      setCookieHeaders = res.headers.getSetCookie()
-    } else {
-      const all = res.headers.get('set-cookie')
-      if (all) setCookieHeaders = all.split(/,(?=\s*\w+=)/)
-    }
-    _cookieJar = setCookieHeaders.map((c) => c.split(';')[0].trim()).filter(Boolean).join('; ')
-    _cookieFetchedAt = Date.now()
-  } catch {
-    _cookieJar = ''
-  }
-  return _cookieJar
-}
+// === Fallback: Yahoo (cookie warm-up lives in _http.js) ===
 
 async function fetchYahoo(symbol) {
   const ticker = symbol.endsWith('.IS') ? symbol : `${symbol}.IS`
-  const cookies = await warmUpYahooCookies()
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d`
 
-  const res = await fetchWithTimeout(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'application/json,text/plain,*/*',
-      Referer: 'https://finance.yahoo.com/',
-      ...(cookies ? { Cookie: cookies } : {}),
-    },
-  })
+  const res = await fetchWithTimeout(url, { headers: await yahooHeaders() })
 
   if (!res.ok) {
     if (res.status === 429) throw new Error('YH_RATE_LIMIT')
