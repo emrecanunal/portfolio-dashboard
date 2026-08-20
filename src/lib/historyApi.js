@@ -85,7 +85,12 @@ export function buildWindows(months, size, now = new Date()) {
 
 const WINDOW_MONTHS = {
   bist: 36, // measured: 1→36 months all return in 0.0–0.4s
-  global: 24, // Yahoo returns monthly candles, so width is nearly free
+  // Alpha Vantage returns a symbol's ENTIRE history in one call — 321 months
+  // for AAPL in the probe, back to 1999. Windowing it would split one request
+  // into several identical ones, each returning the same full history, and
+  // each spending one of the 25 requests the free tier allows per DAY. So the
+  // window is deliberately larger than any range the app can ask for.
+  global: 1200,
   tefas: 60, // one request already spans 60 months; it rate-limits at 6/min
 }
 

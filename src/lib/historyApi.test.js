@@ -97,3 +97,26 @@ describe('earliestTransactionYmd', () => {
     expect(earliestTransactionYmd([])).toBeNull()
   })
 })
+
+describe('buildWindows: one request per source, where that is what the source wants', () => {
+  const now = new Date('2026-08-20T09:00:00Z')
+
+  it('splits a long BIST range into windows', () => {
+    // 36-month windows: measured as costing no more than a 1-month one.
+    expect(buildWindows(36, 36, now)).toHaveLength(1)
+    expect(buildWindows(72, 36, now)).toHaveLength(2)
+  })
+
+  it('never splits a global range, whatever its length', () => {
+    // Alpha Vantage bills per REQUEST and returns everything each time, so a
+    // second window would spend a second daily request for identical data.
+    expect(buildWindows(60, 1200, now)).toHaveLength(1)
+    expect(buildWindows(600, 1200, now)).toHaveLength(1)
+  })
+
+  it('covers the whole span with no gap between windows', () => {
+    const windows = buildWindows(72, 36, now)
+    expect(windows[0].from).toBe('2020-09')
+    expect(windows[windows.length - 1].to).toBe('2026-08')
+  })
+})
