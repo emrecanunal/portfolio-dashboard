@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Plus, Search, Pencil, Trash2, ArrowUpDown, ArrowUp, ArrowDown, X as XIcon } from 'lucide-react'
 import { usePortfolioStore } from '../lib/store.js'
 import { useT } from '../i18n/useT.js'
-import { convertToTRY, formatCurrency, formatSignedCurrency } from '../lib/currency.js'
+import { convertToTRY, formatCurrency, formatFxRate, formatSignedCurrency, quoteFxRate } from '../lib/currency.js'
 import { Card, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { AddTransactionModal } from '../components/modals/AddTransactionModal.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
@@ -282,10 +282,26 @@ export default function Transactions() {
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums text-text-primary whitespace-nowrap">
                           {/* For an exchange the stored price is a placeholder 1 —
-                              show the rate the two amounts actually imply. */}
-                          {tx.type === 'exchange'
-                            ? formatRate(impliedRate(tx))
-                            : formatCurrency(tx.price, tx.currency, { decimals: 2 })}
+                              show the rate the two amounts imply, quoted in the
+                              readable direction (1 USD = 47.9120 TRY). */}
+                          {tx.type === 'exchange' ? (
+                            (() => {
+                              const q = quoteFxRate(tx.quantity, tx.toAmount, tx.currency, tx.toCurrency)
+                              if (!q) return '—'
+                              return (
+                                <>
+                                  <div>{formatFxRate(q.rate)}</div>
+                                  {/* Base first, per FX convention: USD/TRY
+                                      reads as "1 USD costs this many TRY". */}
+                                  <div className="text-2xs text-text-tertiary mt-0.5">
+                                    {q.base}/{q.quote}
+                                  </div>
+                                </>
+                              )
+                            })()
+                          ) : (
+                            formatCurrency(tx.price, tx.currency, { decimals: 2 })
+                          )}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums text-text-primary whitespace-nowrap">
                           {formatCurrency(totalTRY, 'TRY', { decimals: 0 })}
@@ -400,18 +416,6 @@ function EmptyState({ hasFilters, t }) {
 
 function typeBadgeVariant(type) {
   return { buy: 'success', sell: 'danger', deposit: 'info', withdraw: 'warning', exchange: 'accent' }[type] || 'default'
-}
-
-// Rate implied by an exchange txn: 1 source unit = N target units.
-function impliedRate(tx) {
-  const from = Number(tx.quantity) || 0
-  const to = Number(tx.toAmount) || 0
-  return from > 0 ? to / from : 0
-}
-
-function formatRate(rate) {
-  if (!rate) return '—'
-  return rate.toLocaleString('en-US', { maximumFractionDigits: 6 })
 }
 
 function formatNum(n) {

@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowDown, ArrowUp, ArrowDownLeft, ArrowUpRight, Sparkle
 import { useT } from '../../i18n/useT.js'
 import { usePortfolioStore } from '../../lib/store.js'
 import { computePortfolioSummary } from '../../lib/calculations.js'
-import { convertToTRY, formatCurrency } from '../../lib/currency.js'
+import { convertToTRY, formatCurrency, formatFxRate, quoteFxRate } from '../../lib/currency.js'
 import { Modal } from '../ui/Modal.jsx'
 import { Button } from '../ui/Primitives.jsx'
 import { cn } from '../../lib/utils.js'
@@ -101,6 +101,14 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
   const txnTotalTRY = useMemo(
     () => convertToTRY(txnLocalTotal, form.currency, settings.fxRates),
     [txnLocalTotal, form.currency, settings.fxRates]
+  )
+
+  const impliedQuote = useMemo(
+    () =>
+      form.type === 'exchange'
+        ? quoteFxRate(form.quantity, form.toAmount, form.currency, form.toCurrency)
+        : null,
+    [form.type, form.quantity, form.toAmount, form.currency, form.toCurrency]
   )
 
   // === Cash warning (only for buys, only when adding NEW txn) ===
@@ -470,12 +478,13 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
                 </select>
               </div>
             </div>
-            {/* Implied rate hint */}
-            {parseFloat(form.quantity) > 0 && parseFloat(form.toAmount) > 0 && (
+            {/* Implied rate hint — always quoted in the ≥ 1 direction, so a
+                TRY→USD conversion reads "1 USD = 47.9120 TRY". */}
+            {impliedQuote && (
               <div className="bg-bg-tertiary rounded-lg p-3 text-xs text-text-tertiary flex items-center justify-between">
                 <span>{t.txn.impliedRate}</span>
                 <span className="text-text-secondary tabular-nums">
-                  1 {form.currency} = {(parseFloat(form.toAmount) / parseFloat(form.quantity)).toLocaleString('en-US', { maximumFractionDigits: 6 })} {form.toCurrency}
+                  1 {impliedQuote.base} = {formatFxRate(impliedQuote.rate)} {impliedQuote.quote}
                 </span>
               </div>
             )}
