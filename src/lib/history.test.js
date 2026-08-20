@@ -181,3 +181,42 @@ describe('historyCoverage', () => {
     expect(c).toMatchObject({ symbols: 0, months: 0, earliest: null, latest: null })
   })
 })
+
+describe('historyCoverage: symbols the archive never got', () => {
+  // The situation this app is actually in: BIST and TEFAS backfill cleanly,
+  // Yahoo refuses global equities outright. A summary that counts only what
+  // arrived would call that a full archive.
+  const archive = {
+    THYAO: { '2026-06': 300, '2026-07': 310 },
+    AFA: { '2026-06': 1.2, '2026-07': 1.25 },
+  }
+
+  it('names held symbols with no archived month at all', () => {
+    const c = historyCoverage(archive, { '2026-07': { USD: 40 } }, ['THYAO', 'AFA', 'AAPL'])
+    expect(c.missing).toEqual(['AAPL'])
+    expect(c.complete).toBe(false)
+  })
+
+  it('is complete when every held symbol is covered', () => {
+    const c = historyCoverage(archive, {}, ['THYAO', 'AFA'])
+    expect(c.missing).toEqual([])
+    expect(c.complete).toBe(true)
+  })
+
+  it('counts a symbol present but empty as missing', () => {
+    const c = historyCoverage({ ...archive, AAPL: {} }, {}, ['THYAO', 'AFA', 'AAPL'])
+    expect(c.missing).toEqual(['AAPL'])
+  })
+
+  it('reports nothing about missing symbols when not told what is held', () => {
+    // The old two-argument call must keep working and must not invent a claim.
+    const c = historyCoverage(archive, {})
+    expect(c.missing).toEqual([])
+    expect(c.complete).toBeNull()
+  })
+
+  it('ignores duplicates in the held list', () => {
+    const c = historyCoverage(archive, {}, ['AAPL', 'AAPL', 'THYAO'])
+    expect(c.missing).toEqual(['AAPL'])
+  })
+})

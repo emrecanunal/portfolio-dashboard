@@ -4,6 +4,7 @@ import { usePortfolioStore } from '../lib/store.js'
 import { useT } from '../i18n/useT.js'
 import { formatRelativeTime, isStale, isVeryStale } from '../lib/fxApi.js'
 import { historyCoverage } from '../lib/history.js'
+import { computeHoldings } from '../lib/calculations.js'
 import { exportJsonBackup, parseJsonBackup, exportTransactionsCsv } from '../lib/dataExport.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
@@ -807,6 +808,7 @@ function FinnhubKeyInput() {
 // looks like good news rather than like missing data.
 function PriceHistoryPanel() {
   const { t, ti, lang } = useT()
+  const transactions = usePortfolioStore((s) => s.transactions)
   const priceHistory = usePortfolioStore((s) => s.priceHistory)
   const fxHistory = usePortfolioStore((s) => s.fxHistory)
   const historyMeta = usePortfolioStore((s) => s.settings.historyMeta) || {}
@@ -815,9 +817,16 @@ function PriceHistoryPanel() {
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState(null)
 
+  // Held symbols go in so coverage can name what it does NOT have. Counting
+  // only what arrived would call a Yahoo-shaped hole a complete archive.
+  const heldSymbols = useMemo(
+    () => computeHoldings(transactions).map((h) => h.symbol),
+    [transactions]
+  )
+
   const coverage = useMemo(
-    () => historyCoverage(priceHistory, fxHistory),
-    [priceHistory, fxHistory]
+    () => historyCoverage(priceHistory, fxHistory, heldSymbols),
+    [priceHistory, fxHistory, heldSymbols]
   )
 
   const run = async () => {
@@ -871,6 +880,12 @@ function PriceHistoryPanel() {
             latest: coverage.latest,
             fxMonths: coverage.fxMonths,
           })}
+        </p>
+      )}
+
+      {coverage.missing.length > 0 && (
+        <p className="text-2xs text-warning leading-relaxed">
+          {ti(t.settingsPage.historyMissing, { symbols: coverage.missing.join(', ') })}
         </p>
       )}
 

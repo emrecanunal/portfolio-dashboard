@@ -155,13 +155,27 @@ export function mergeFxBackfill(existing, incoming) {
   return next
 }
 
-/** How many months of history we hold for a symbol — used by the Settings UI. */
-export function historyCoverage(priceHistory, fxHistory) {
+// How much history we actually hold — used by the Settings UI.
+//
+// Pass `heldSymbols` (what the portfolio owns today) to get `missing`: the
+// symbols with NO archived month at all. Without it this function can only
+// count what is present, and a symbol whose source refused us entirely — as
+// Yahoo does for global equities — is invisible. "36 months across 3 symbols"
+// while a fourth has nothing is not a true summary, and the chart it describes
+// is estimated for every single month because of that fourth symbol.
+export function historyCoverage(priceHistory, fxHistory, heldSymbols = null) {
   const symbols = Object.keys(priceHistory || {})
   const monthCounts = symbols.map((s) => Object.keys(priceHistory[s] || {}).length)
   const allMonths = new Set()
   for (const s of symbols) for (const k of Object.keys(priceHistory[s] || {})) allMonths.add(k)
   const sorted = [...allMonths].sort()
+
+  const missing = heldSymbols
+    ? [...new Set(heldSymbols)]
+        .filter((s) => Object.keys(priceHistory?.[s] || {}).length === 0)
+        .sort()
+    : []
+
   return {
     symbols: symbols.length,
     months: sorted.length,
@@ -169,5 +183,9 @@ export function historyCoverage(priceHistory, fxHistory) {
     latest: sorted[sorted.length - 1] || null,
     fxMonths: Object.keys(fxHistory || {}).length,
     thinnest: monthCounts.length ? Math.min(...monthCounts) : 0,
+    missing,
+    // True when every held symbol has at least one archived month. Only then
+    // can the chart be exact rather than estimated.
+    complete: heldSymbols ? missing.length === 0 && symbols.length > 0 : null,
   }
 }
