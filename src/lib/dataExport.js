@@ -27,11 +27,15 @@ function timestampSuffix() {
 // Excludes anything sensitive: NEVER includes the Finnhub API key.
 export function exportJsonBackup(state) {
   const sanitized = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     transactions: state.transactions,
     subPortfolios: state.subPortfolios,
     priceCache: state.priceCache,
+    // The month-end archives are re-derivable from the sources, but only
+    // while those sources still answer — and they are small. Back them up.
+    priceHistory: state.priceHistory,
+    fxHistory: state.fxHistory,
     settings: {
       ...state.settings,
       // Strip API key from backup file for safety
@@ -59,6 +63,8 @@ export function parseJsonBackup(text) {
         transactions: data.transactions,
         subPortfolios: data.subPortfolios,
         priceCache: data.priceCache || {},
+        priceHistory: data.priceHistory || null,
+        fxHistory: data.fxHistory || null,
         settings: data.settings || {},
       },
       summary: {

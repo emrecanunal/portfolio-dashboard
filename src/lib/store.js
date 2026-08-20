@@ -4,6 +4,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { demoTransactions, demoSubPortfolios, demoPriceCache } from '../data/demoData.js'
+import {
+  recordPriceSnapshot,
+  recordFxSnapshot,
+  mergeBackfill,
+  mergeFxBackfill,
+} from './history.js'
 
 const defaultSettings = {
   baseCurrency: 'TRY',
@@ -34,6 +40,17 @@ const defaultSettings = {
   // (see PriceAutoRefresh.jsx) because TEFAS publishes once a day.
   autoRefreshEnabled: true,
   autoRefreshMinutes: 5,
+  // Performance chart: overlay the "money I put in" line. Needs no price
+  // history, so it is accurate even before any backfill.
+  showContributionsLine: true,
+  // Result of the last history backfill, for the Settings panel.
+  historyMeta: {
+    backfilledAt: null,
+    months: 0,
+    symbols: 0,
+    fxMonths: 0,
+    errors: [],
+  },
   // Equity-price live-data metadata
   finnhubApiKey: '',           // user-provided; empty = manual prices only
   priceMeta: {
@@ -49,6 +66,10 @@ export const usePortfolioStore = create(
       transactions: demoTransactions,
       subPortfolios: demoSubPortfolios,
       priceCache: demoPriceCache,
+      // Month-end archives behind the performance chart. See history.js for
+      // the shape and why they are monthly rather than daily.
+      priceHistory: {},
+      fxHistory: {},
       settings: defaultSettings,
 
       addTransaction: (tx) =>
@@ -100,6 +121,8 @@ export const usePortfolioStore = create(
           transactions: demoTransactions,
           subPortfolios: demoSubPortfolios,
           priceCache: demoPriceCache,
+          priceHistory: {},
+          fxHistory: {},
           settings: defaultSettings,
         }),
 
@@ -117,6 +140,9 @@ export const usePortfolioStore = create(
           const { fetchLiveFxRates } = await import('./fxApi.js')
           const result = await fetchLiveFxRates()
           set((s) => ({
+            // Archive this month's rates as we go, so next year's chart can
+            // value this month properly instead of at whatever the rate is then.
+            fxHistory: recordFxSnapshot(s.fxHistory, result.rates),
             settings: {
               ...s.settings,
               fxRates: result.rates,
@@ -228,6 +254,10 @@ export const usePortfolioStore = create(
 
           set((s) => ({
             priceCache: updatedCache,
+            // Repeated writes within a month overwrite, so the final refresh
+            // before the month turns over becomes that month's close.
+            priceHistory: recordPriceSnapshot(s.priceHistory, updatedCache),
+            fxHistory: recordFxSnapshot(s.fxHistory, s.settings.fxRates),
             settings: {
               ...s.settings,
               priceMeta: {
@@ -268,6 +298,82 @@ export const usePortfolioStore = create(
         }
       },
 
+      // === HISTORY BACKFILL ===
+      //
+      // Seeds the month-end archives from the sources, so the performance chart
+      // has a real past instead of waiting months for snapshots to accumulate.
+      // One-off and user-triggered; nothing calls this on a timer.
+      //
+      // Backfilled months never overwrite a snapshot we took ourselves — see
+      // mergeBackfill() for why.
+      backfillHistory: async (onProgress) => {
+        const state = get()
+        try {
+          const { fetchFxHistory, fetchPriceHistory, monthsToCover, earliestTransactionYmd } =
+            await import('./historyApi.js')
+
+          const months = monthsToCover(state.transactions)
+
+          // Held symbols, deduped by symbol+type — the archive is keyed by
+          // symbol, so the same holding in two sub-portfolios is one fetch.
+          const held = new Map()
+          for (const tx of state.transactions) {
+            if (tx.assetType === 'cash') continue
+            const cur = held.get(tx.symbol) || { symbol: tx.symbol, assetType: tx.assetType, qty: 0 }
+            if (tx.type === 'buy') cur.qty += tx.quantity
+            else if (tx.type === 'sell') cur.qty -= tx.quantity
+            held.set(tx.symbol, cur)
+          }
+          const holdings = [...held.values()].filter((h) => h.qty > 0.0001)
+
+          // FX first: it is one request, it never fails for a bad symbol, and
+          // the chart needs it even for an all-TRY portfolio.
+          let fxMonths = {}
+          let fxError = null
+          try {
+            onProgress?.('fx', 0, 1)
+            const from = earliestTransactionYmd(state.transactions) || todayIso()
+            fxMonths = await fetchFxHistory(from, todayIso())
+            onProgress?.('fx', 1, 1)
+          } catch (err) {
+            fxError = err.message || 'FX history failed'
+          }
+
+          const { results, errors, sourceStats } = await fetchPriceHistory({
+            holdings,
+            months,
+            onProgress,
+          })
+
+          set((s) => ({
+            priceHistory: mergeBackfill(s.priceHistory, results),
+            fxHistory: mergeFxBackfill(s.fxHistory, fxMonths),
+            settings: {
+              ...s.settings,
+              historyMeta: {
+                backfilledAt: Date.now(),
+                months,
+                symbols: Object.keys(results).length,
+                fxMonths: Object.keys(fxMonths).length,
+                errors: errors.map((e) => e.symbol).filter(Boolean),
+                sourceStats,
+                fxError,
+              },
+            },
+          }))
+
+          return { ok: true, symbols: Object.keys(results).length, errors, sourceStats, fxError }
+        } catch (err) {
+          set((s) => ({
+            settings: {
+              ...s.settings,
+              historyMeta: { ...s.settings.historyMeta, lastError: err.message || 'Failed' },
+            },
+          }))
+          return { ok: false, errorMessage: err.message || 'Failed' }
+        }
+      },
+
       setFinnhubApiKey: (key) =>
         set((s) => ({
           settings: { ...s.settings, finnhubApiKey: key },
@@ -293,6 +399,10 @@ export const usePortfolioStore = create(
           transactions: data.transactions || s.transactions,
           subPortfolios: data.subPortfolios || s.subPortfolios,
           priceCache: data.priceCache || s.priceCache,
+          // Older backups predate the archives; keep whatever is in memory
+          // rather than wiping months that would cost API calls to rebuild.
+          priceHistory: data.priceHistory || s.priceHistory,
+          fxHistory: data.fxHistory || s.fxHistory,
           settings: {
             ...s.settings,
             ...(data.settings || {}),
@@ -303,6 +413,19 @@ export const usePortfolioStore = create(
     }),
     {
       name: 'portfolio-dashboard-v1',
+      // Bump this whenever a new top-level field is added, and handle the gap
+      // in `migrate`. Before this existed, adding a field meant every returning
+      // user got `undefined` for it until something happened to write it.
+      version: 1,
+      migrate: (persisted, fromVersion) => {
+        if (!persisted) return persisted
+        if (fromVersion < 1) {
+          // v0 → v1: the month-end archives did not exist. Start them empty;
+          // Settings offers a one-click backfill to populate the past.
+          return { ...persisted, priceHistory: {}, fxHistory: {} }
+        }
+        return persisted
+      },
       merge: (persisted, current) => {
         if (!persisted) return current
         return {
@@ -318,6 +441,13 @@ export const usePortfolioStore = create(
 // Record "we tried this source just now" for the sources a refresh covered.
 // The auto-refresh scheduler reads these to decide what is due: equities every
 // few minutes, funds every few hours.
+// Local calendar day as 'YYYY-MM-DD' — never toISOString(), which would give
+// yesterday to anyone in Turkey between midnight and 03:00.
+function todayIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function stampSources(previous, sources) {
   const now = Date.now()
   const next = { ...(previous || {}) }

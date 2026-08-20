@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, RotateCcw, Eraser, Check, X as XIcon, RefreshCw, 
 import { usePortfolioStore } from '../lib/store.js'
 import { useT } from '../i18n/useT.js'
 import { formatRelativeTime, isStale, isVeryStale } from '../lib/fxApi.js'
+import { historyCoverage } from '../lib/history.js'
 import { exportJsonBackup, parseJsonBackup, exportTransactionsCsv } from '../lib/dataExport.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
@@ -160,6 +161,7 @@ export default function SettingsPage() {
           <PriceStatusBar />
           <AutoRefreshControl />
           <FinnhubKeyInput />
+          <PriceHistoryPanel />
           <PriceCacheTable />
         </CardBody>
       </Card>
@@ -797,6 +799,100 @@ function FinnhubKeyInput() {
   )
 }
 
+// Seeds the month-end archive behind the performance chart.
+//
+// Worth its own panel rather than a hidden action: until this has run, the
+// chart values every past month at today's prices and therefore cannot slope
+// down. The empty state says exactly that, because a chart that only goes up
+// looks like good news rather than like missing data.
+function PriceHistoryPanel() {
+  const { t, ti, lang } = useT()
+  const priceHistory = usePortfolioStore((s) => s.priceHistory)
+  const fxHistory = usePortfolioStore((s) => s.fxHistory)
+  const historyMeta = usePortfolioStore((s) => s.settings.historyMeta) || {}
+  const backfillHistory = usePortfolioStore((s) => s.backfillHistory)
+
+  const [running, setRunning] = useState(false)
+  const [progress, setProgress] = useState(null)
+
+  const coverage = useMemo(
+    () => historyCoverage(priceHistory, fxHistory),
+    [priceHistory, fxHistory]
+  )
+
+  const run = async () => {
+    setRunning(true)
+    setProgress(null)
+    await backfillHistory((type, done, total) => setProgress({ type, done, total }))
+    setRunning(false)
+    setProgress(null)
+  }
+
+  const label = { fx: 'FX', bist: 'BIST', tefas: 'TEFAS', global: 'Global' }
+
+  return (
+    <div className="rounded-lg border border-border-subtle p-3 space-y-2">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-text-primary">
+            {t.settingsPage.priceHistory}
+          </div>
+          <div className="text-2xs text-text-tertiary mt-0.5">
+            {t.settingsPage.priceHistoryDesc}
+          </div>
+        </div>
+        <button
+          onClick={run}
+          disabled={running}
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium shrink-0',
+            'bg-bg-tertiary border border-border-subtle text-text-secondary',
+            'hover:bg-bg-elevated hover:text-text-primary hover:border-border-default',
+            'transition-colors disabled:opacity-60 disabled:cursor-wait'
+          )}
+        >
+          <Download size={11} strokeWidth={2.25} className={running ? 'animate-pulse' : ''} />
+          {running
+            ? progress
+              ? `${label[progress.type] || ''} ${progress.done}/${progress.total}`
+              : t.settingsPage.backfilling
+            : t.settingsPage.backfill}
+        </button>
+      </div>
+
+      {coverage.months === 0 ? (
+        <p className="text-2xs text-warning leading-relaxed">{t.settingsPage.historyEmpty}</p>
+      ) : (
+        <p className="text-2xs text-text-tertiary tabular-nums">
+          {ti(t.settingsPage.historyCoverage, {
+            symbols: coverage.symbols,
+            months: coverage.months,
+            earliest: coverage.earliest,
+            latest: coverage.latest,
+            fxMonths: coverage.fxMonths,
+          })}
+        </p>
+      )}
+
+      {historyMeta.backfilledAt && (
+        <p className="text-2xs text-text-tertiary">
+          {t.settingsPage.lastUpdated}: {formatRelativeTime(historyMeta.backfilledAt, lang)}
+        </p>
+      )}
+
+      {historyMeta.errors?.length > 0 && (
+        <p className="text-2xs text-warning">
+          {ti(t.settingsPage.historyPartial, { symbols: historyMeta.errors.join(', ') })}
+        </p>
+      )}
+
+      <p className="text-2xs text-text-tertiary leading-relaxed pt-1 border-t border-border-subtle">
+        {t.settingsPage.historyNote}
+      </p>
+    </div>
+  )
+}
+
 function PriceCacheTable() {
   const { t } = useT()
   const priceCache = usePortfolioStore((s) => s.priceCache)
@@ -1012,6 +1108,8 @@ function ExportBackupActions() {
   const transactions = usePortfolioStore((s) => s.transactions)
   const subPortfolios = usePortfolioStore((s) => s.subPortfolios)
   const priceCache = usePortfolioStore((s) => s.priceCache)
+  const priceHistory = usePortfolioStore((s) => s.priceHistory)
+  const fxHistory = usePortfolioStore((s) => s.fxHistory)
   const settings = usePortfolioStore((s) => s.settings)
   const restoreFromBackup = usePortfolioStore((s) => s.restoreFromBackup)
 
@@ -1021,7 +1119,7 @@ function ExportBackupActions() {
   const [successMessage, setSuccessMessage] = useState(null)
 
   const handleExportJson = () => {
-    exportJsonBackup({ transactions, subPortfolios, priceCache, settings })
+    exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
   }
 
   const handleExportCsv = () => {

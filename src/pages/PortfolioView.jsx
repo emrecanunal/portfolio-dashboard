@@ -45,6 +45,8 @@ export function PortfolioView({ scope = { type: 'master' } }) {
   const transactions = usePortfolioStore((s) => s.transactions)
   const subPortfolios = usePortfolioStore((s) => s.subPortfolios)
   const priceCache = usePortfolioStore((s) => s.priceCache)
+  const priceHistory = usePortfolioStore((s) => s.priceHistory)
+  const fxHistory = usePortfolioStore((s) => s.fxHistory)
   const settings = usePortfolioStore((s) => s.settings)
   const updateSettings = usePortfolioStore((s) => s.updateSettings)
 
@@ -87,8 +89,12 @@ export function PortfolioView({ scope = { type: 'master' } }) {
   // A value of 0 means "All time" — computePerformanceSeries handles that by
   // anchoring to the earliest transaction date.
   const performance = useMemo(
-    () => computePerformanceSeries(scopedTxns, priceCache, settings.fxRates, settings.fireLookbackMonths),
-    [scopedTxns, priceCache, settings.fxRates, settings.fireLookbackMonths]
+    () =>
+      computePerformanceSeries(scopedTxns, priceCache, settings.fxRates, settings.fireLookbackMonths, {
+        priceHistory,
+        fxHistory,
+      }),
+    [scopedTxns, priceCache, settings.fxRates, settings.fireLookbackMonths, priceHistory, fxHistory]
   )
 
   const fireMetrics = useMemo(
@@ -283,9 +289,21 @@ export function PortfolioView({ scope = { type: 'master' } }) {
                   : t.dashboard.allTimeRange}
               </CardSubtitle>
             </div>
+            <label className="flex items-center gap-1.5 text-2xs text-text-tertiary cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={settings.showContributionsLine !== false}
+                onChange={(e) => updateSettings({ showContributionsLine: e.target.checked })}
+                className="w-3.5 h-3.5 rounded border-border-strong cursor-pointer accent-accent"
+              />
+              {t.dashboard.showContributions}
+            </label>
           </CardHeader>
           <CardBody>
-            <PerformanceLine data={performance} />
+            <PerformanceLine
+              data={performance}
+              showContributions={settings.showContributionsLine !== false}
+            />
           </CardBody>
         </Card>
       </div>

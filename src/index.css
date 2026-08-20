@@ -31,6 +31,14 @@
 
   --chart-grid: rgba(255, 255, 255, 0.04);
   --tooltip-bg: #1a1a1f;
+
+  /* Chart series. Deliberately NOT --accent: series colours have to satisfy
+     the OKLCH lightness band, chroma floor and colour-vision separation for
+     THIS surface, and --accent (#10b981, L 0.696) sits outside the dark band.
+     Both pairs below pass every check of scripts/validate_palette.js —
+     re-run it before changing either. */
+  --chart-series-1: #059669; /* portfolio value */
+  --chart-series-2: #3b82f6; /* money paid in */
 }
 
 /* ========== LIGHT THEME ========== */
@@ -61,6 +69,10 @@
 
   --chart-grid: rgba(0, 0, 0, 0.05);
   --tooltip-bg: #ffffff;
+
+  /* Light mode gets its own steps, not an automatic flip of the dark ones. */
+  --chart-series-1: #059669;
+  --chart-series-2: #2563eb;
 }
 
 @layer base {

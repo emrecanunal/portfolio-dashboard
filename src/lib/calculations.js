@@ -6,6 +6,7 @@
 // portfolio tracker can have.
 
 import { convertToTRY } from './currency.js'
+import { monthKeyOfYmd, priceAtMonth, fxAtMonth } from './history.js'
 
 // === DATES ===
 //
@@ -457,16 +458,36 @@ export function computeDayChange(allocationDetail) {
 
 // === TIME SERIES ===
 
-// months = 0 (or any falsy value) means "All time" — series spans from the
-// earliest transaction's month up to the current month. We cap at 60 months
-// to keep the chart readable for very old accounts.
+// Value the portfolio month by month, using each month's OWN prices and FX
+// rates when we have them.
 //
-// KNOWN LIMITATION: every past month is valued with TODAY's prices and TODAY's
-// FX rates, because that is the only price data we store. The series therefore
-// shows roughly "what I put in", not "what it did" — it can never slope down
-// on a market drop. Fixing it needs a per-month price/FX snapshot.
-export function computePerformanceSeries(transactions, priceCache, fxRates, months = 6) {
+// This used to value every past month at today's prices and today's rates, so
+// the line could only ever go up — it drew contributions, not performance.
+// `options.priceHistory` / `options.fxHistory` (see history.js) fix that.
+// Without them the function still works and still returns a line, but every
+// point is flagged `estimated` so the chart can say so rather than implying a
+// precision it does not have.
+//
+// months = 0 (or any falsy value) means "All time" — the series spans from the
+// earliest transaction's month to the current one, capped at 60 months to keep
+// the chart readable.
+//
+// Each point carries:
+//   value        portfolio worth at that month's close, in TRY of that month
+//   contributed  cumulative deposits minus withdrawals, each converted at the
+//                rate in force when it happened — i.e. the lira you actually
+//                parted with. The gap between the two lines IS the growth.
+//   estimated    true when any price or rate behind `value` was reconstructed
+export function computePerformanceSeries(
+  transactions,
+  priceCache,
+  fxRates,
+  months = 6,
+  options = {}
+) {
+  const { priceHistory = null, fxHistory = null } = options
   const now = new Date()
+
   let effectiveMonths = months
   if (!months || months <= 0) {
     if (transactions.length === 0) {
@@ -486,8 +507,20 @@ export function computePerformanceSeries(transactions, priceCache, fxRates, mont
   const series = []
   for (let i = effectiveMonths - 1; i >= 0; i--) {
     const cutoffYmd = endOfMonthYmd(now, i)
+    const monthKey = monthKeyOfYmd(cutoffYmd)
     const txnsUpTo = transactions.filter((t) => txYmd(t) <= cutoffYmd)
-    const summary = computePortfolioSummaryAt(txnsUpTo, priceCache, fxRates)
+
+    const isCurrentMonth = i === 0
+    const snapshot = valueAtMonth(txnsUpTo, monthKey, {
+      priceCache,
+      fxRates,
+      priceHistory,
+      fxHistory,
+      // The current month has no close yet, so live prices are the right
+      // answer for it, not a reconstruction.
+      preferLive: isCurrentMonth,
+    })
+
     const labelDate = new Date(now.getFullYear(), now.getMonth() - i, 1)
     series.push({
       label: labelDate.toLocaleDateString('en-US', {
@@ -495,20 +528,84 @@ export function computePerformanceSeries(transactions, priceCache, fxRates, mont
         // For long ranges, include the year so the x-axis is unambiguous
         ...(effectiveMonths > 12 ? { year: '2-digit' } : {}),
       }),
-      value: summary.totalValue,
+      value: snapshot.totalValue,
+      contributed: contributedUpTo(txnsUpTo, fxRates, fxHistory),
+      estimated: snapshot.estimated,
       date: cutoffYmd,
     })
   }
   return series
 }
 
-function computePortfolioSummaryAt(txns, priceCache, fxRates) {
+// Cumulative net deposits up to a point, each converted at the rate in force
+// in the month it happened.
+//
+// Deliberately NOT converted at today's rate: the question this answers is
+// "how much money did I hand over", and for a foreign-currency deposit that is
+// the lira it cost at the time. Needs no price history at all, so this line is
+// exact from day one even when `value` is still being reconstructed.
+function contributedUpTo(txns, fxRates, fxHistory) {
+  let total = 0
+  for (const tx of txns) {
+    if (tx.type !== 'deposit' && tx.type !== 'withdraw') continue
+    const rates = fxHistory
+      ? fxAtMonth(fxHistory, monthKeyOfYmd(txYmd(tx)), fxRates).value
+      : fxRates
+    const amount = convertToTRY((tx.quantity || 1) * (tx.price || 0), tx.currency, rates)
+    total += tx.type === 'deposit' ? amount : -amount
+  }
+  return total
+}
+
+// Portfolio value at one month's close.
+//
+// Resolution order for each holding's price:
+//   1. that month's archived close            → exact
+//   2. the nearest archived month             → estimated
+//   3. the live price cache                   → estimated (this is the old
+//                                               behaviour, now labelled)
+//   4. the position's own average cost        → estimated
+export function valueAtMonth(txns, monthKey, opts) {
+  const { priceCache = {}, fxRates, priceHistory, fxHistory, preferLive = false } = opts
+
+  const fxHit = fxHistory ? fxAtMonth(fxHistory, monthKey, fxRates) : { value: fxRates, quality: 'missing' }
+  const monthRates = preferLive ? fxRates : fxHit.value
+  let estimated = preferLive ? false : fxHit.quality !== 'exact'
+
   const holdings = computeHoldings(txns)
-  const valued = valueHoldings(holdings, priceCache, fxRates)
-  const cashMap = computeCashByPortfolio(txns, fxRates)
+  let investedValue = 0
+
+  for (const h of holdings) {
+    let price = null
+
+    if (!preferLive && priceHistory) {
+      const hit = priceAtMonth(priceHistory, h.symbol, monthKey)
+      if (hit.value != null) {
+        price = hit.value
+        if (hit.quality !== 'exact') estimated = true
+      }
+    }
+
+    if (price == null) {
+      const live = priceCache?.[h.symbol]?.price
+      if (typeof live === 'number' && isFinite(live) && live > 0) {
+        price = live
+        if (!preferLive) estimated = true
+      }
+    }
+
+    if (price == null) {
+      price = h.qty > 0 ? h.totalCost / h.qty : 0
+      estimated = true
+    }
+
+    investedValue += convertToTRY(h.qty * price, h.currency, monthRates)
+  }
+
+  const cashMap = computeCashByPortfolio(txns, monthRates)
   const cashTotal = [...cashMap.values()].reduce((a, b) => a + b, 0)
-  const investedValue = valued.reduce((sum, h) => sum + h.marketValueTRY, 0)
-  return { totalValue: investedValue + Math.max(0, cashTotal) }
+
+  return { totalValue: investedValue + Math.max(0, cashTotal), investedValue, estimated }
 }
 
 // === FIRE ===

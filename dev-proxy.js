@@ -9,6 +9,7 @@ import express from 'express'
 import { bistHandle } from './api/bist.js'
 import { tefasHandle } from './api/tefas.js'
 import { globalHandle } from './api/global.js'
+import { historyHandle } from './api/history.js'
 
 const PORT = 3001
 const app = express()
@@ -56,6 +57,16 @@ app.get('/api/global', async (req, res) => {
   }
 })
 
+app.get('/api/history', async (req, res) => {
+  try {
+    const data = await historyHandle(req.query.type || '', req.query.symbols || '', req.query.months)
+    res.json(data)
+  } catch (err) {
+    console.error('History error:', err)
+    res.status(500).json({ error: err.message || 'Internal error' })
+  }
+})
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() })
@@ -66,5 +77,6 @@ app.listen(PORT, () => {
   console.log(`   • GET /api/bist?symbols=THYAO,AKBNK`)
   console.log(`   • GET /api/tefas?symbols=AFA,TI2`)
   console.log(`   • GET /api/global?symbols=AAPL,VOO`)
+  console.log(`   • GET /api/history?type=bist&symbols=THYAO&months=24`)
   console.log(`   • GET /api/health\n`)
 })

@@ -22,6 +22,7 @@ import {
   computeMonthlySavingsSeries,
   computeFireMetrics,
   computeDataWarnings,
+  valueAtMonth,
   projectMonthsToFire,
 } from './calculations.js'
 import { computeStageTargets, computeJourneyPosition } from './fireStages.js'
@@ -487,5 +488,178 @@ describe('projectMonthsToFire', () => {
         monthlyGrowthRate: 0,
       })
     ).toBe(Infinity)
+  })
+})
+
+describe('computePerformanceSeries with stored history', () => {
+  // The whole point of the archive: before it existed, every past month was
+  // valued at TODAY's price, so the line could only ever slope up. These tests
+  // exist to make sure it can slope down again.
+
+  const buy = (date, qty, price) =>
+    tx({ date, quantity: qty, price, symbol: 'THYAO', assetType: 'bist' })
+
+  it('values each month at that month\'s own price', () => {
+    const txns = [deposit({ date: '2026-05-01', price: 100000 }), buy('2026-05-02', 100, 100)]
+    const priceHistory = {
+      THYAO: { '2026-05': 100, '2026-06': 150, '2026-07': 120, '2026-08': 130 },
+    }
+    const series = computePerformanceSeries(
+      txns,
+      { THYAO: { price: 130, currency: 'TRY' } },
+      FX,
+      4,
+      { priceHistory, fxHistory: {} }
+    )
+    // 90.000 cash left after the buy, plus 100 shares at each month's close.
+    expect(series.map((p) => p.value)).toEqual([
+      90000 + 100 * 100,
+      90000 + 100 * 150,
+      90000 + 100 * 120,
+      90000 + 100 * 130,
+    ])
+  })
+
+  it('slopes DOWN when the market fell — the bug this whole feature exists for', () => {
+    const txns = [deposit({ date: '2026-05-01', price: 100000 }), buy('2026-05-02', 100, 100)]
+    const priceHistory = { THYAO: { '2026-05': 200, '2026-06': 150, '2026-07': 120, '2026-08': 90 } }
+    const series = computePerformanceSeries(
+      txns,
+      { THYAO: { price: 90, currency: 'TRY' } },
+      FX,
+      4,
+      { priceHistory, fxHistory: {} }
+    )
+    const values = series.map((p) => p.value)
+    expect(values[0]).toBeGreaterThan(values[1])
+    expect(values[1]).toBeGreaterThan(values[2])
+    expect(values[2]).toBeGreaterThan(values[3])
+  })
+
+  it('produced a flat, only-rising line before history existed', () => {
+    // Documents the old behaviour so nobody "simplifies" the archive away.
+    const txns = [deposit({ date: '2026-05-01', price: 100000 }), buy('2026-05-02', 100, 100)]
+    const series = computePerformanceSeries(txns, { THYAO: { price: 90, currency: 'TRY' } }, FX, 4)
+    const values = series.map((p) => p.value)
+    expect(new Set(values).size).toBe(1) // every month identical
+    // Every past month is a reconstruction; the current one is legitimately live.
+    expect(series.slice(0, -1).every((p) => p.estimated)).toBe(true)
+  })
+
+  it('uses each month\'s FX rate for foreign holdings', () => {
+    const txns = [
+      deposit({ date: '2026-05-01', price: 10000, currency: 'USD' }),
+      tx({ date: '2026-05-02', symbol: 'AAPL', assetType: 'global', currency: 'USD', quantity: 10, price: 200 }),
+    ]
+    const priceHistory = { AAPL: { '2026-06': 200, '2026-07': 200, '2026-08': 200 } }
+    const fxHistory = { '2026-06': { TRY: 1, USD: 30 }, '2026-07': { TRY: 1, USD: 40 }, '2026-08': { TRY: 1, USD: 50 } }
+    // Current rates match the current month's archived rates, as they always
+    // will in practice — the archive is written from them.
+    const liveRates = { TRY: 1, USD: 50, EUR: 45 }
+    const series = computePerformanceSeries(txns, {}, liveRates, 3, { priceHistory, fxHistory })
+    // Holdings unchanged; only the lira value of them moves with the rate.
+    expect(series[0].value).toBeCloseTo(10000 * 30, 6)
+    expect(series[1].value).toBeCloseTo(10000 * 40, 6)
+    expect(series[2].value).toBeCloseTo(10000 * 50, 6)
+  })
+
+  it('marks a month estimated when its price had to be reconstructed', () => {
+    const txns = [deposit({ date: '2026-05-01', price: 100000 }), buy('2026-05-02', 100, 100)]
+    // June is missing from the archive.
+    const priceHistory = { THYAO: { '2026-05': 100, '2026-07': 120, '2026-08': 130 } }
+    const fxHistory = { '2026-05': FX, '2026-06': FX, '2026-07': FX, '2026-08': FX }
+    const series = computePerformanceSeries(txns, {}, FX, 4, { priceHistory, fxHistory })
+    expect(series[0].estimated).toBe(false) // May: exact
+    expect(series[1].estimated).toBe(true) // June: carried forward from May
+    expect(series[2].estimated).toBe(false) // July: exact
+  })
+
+  it('treats the current month as live, not as a reconstruction', () => {
+    // There is no month-end close for a month that hasn't ended. Using the
+    // live price there is correct, so it must not be flagged.
+    const txns = [deposit({ date: '2026-05-01', price: 100000 }), buy('2026-05-02', 100, 100)]
+    const series = computePerformanceSeries(
+      txns,
+      { THYAO: { price: 500, currency: 'TRY' } },
+      FX,
+      4,
+      { priceHistory: { THYAO: { '2026-05': 100, '2026-06': 100, '2026-07': 100 } }, fxHistory: {} }
+    )
+    const last = series[series.length - 1]
+    expect(last.estimated).toBe(false)
+    expect(last.value).toBeCloseTo(90000 + 100 * 500, 6)
+  })
+})
+
+describe('the contributions line', () => {
+  it('accumulates deposits and nets off withdrawals', () => {
+    const txns = [
+      deposit({ date: '2026-06-10', price: 50000 }),
+      deposit({ date: '2026-07-10', price: 30000 }),
+      tx({ date: '2026-08-05', type: 'withdraw', assetType: 'cash', quantity: 1, price: 10000 }),
+    ]
+    const series = computePerformanceSeries(txns, {}, FX, 3, { priceHistory: {}, fxHistory: {} })
+    expect(series.map((p) => p.contributed)).toEqual([50000, 80000, 70000])
+  })
+
+  it('ignores buys and sells, which move money without adding any', () => {
+    const txns = [
+      deposit({ date: '2026-06-10', price: 50000 }),
+      tx({ date: '2026-06-11', quantity: 100, price: 100 }),
+      tx({ date: '2026-07-11', type: 'sell', quantity: 50, price: 200 }),
+    ]
+    const series = computePerformanceSeries(txns, {}, FX, 3, { priceHistory: {}, fxHistory: {} })
+    expect(series.every((p) => p.contributed === 50000)).toBe(true)
+  })
+
+  it('converts a foreign deposit at the rate in force when it happened', () => {
+    // $1000 deposited when USD was 30 cost 30.000 lira. It does not become
+    // 50.000 lira of contribution just because the rate later moved.
+    const txns = [deposit({ date: '2026-06-10', price: 1000, currency: 'USD' })]
+    const fxHistory = { '2026-06': { TRY: 1, USD: 30 } }
+    const series = computePerformanceSeries(txns, {}, { TRY: 1, USD: 50 }, 3, {
+      priceHistory: {},
+      fxHistory,
+    })
+    expect(series[0].contributed).toBeCloseTo(30000, 6)
+    expect(series[2].contributed).toBeCloseTo(30000, 6)
+  })
+
+  it('is exact even when the value line is still being reconstructed', () => {
+    const txns = [deposit({ date: '2026-06-10', price: 50000 }), tx({ date: '2026-06-11', quantity: 10, price: 100 })]
+    const series = computePerformanceSeries(txns, {}, FX, 3)
+    expect(series.slice(0, -1).every((p) => p.estimated)).toBe(true)
+    expect(series[0].contributed).toBe(50000)
+  })
+})
+
+describe('valueAtMonth', () => {
+  it('falls back through history → live cache → average cost, flagging each', () => {
+    const txns = [deposit({ price: 100000 }), tx({ quantity: 10, price: 100 })]
+
+    const fromHistory = valueAtMonth(txns, '2026-08', {
+      fxRates: FX,
+      priceHistory: { THYAO: { '2026-08': 250 } },
+      fxHistory: { '2026-08': FX },
+    })
+    expect(fromHistory.investedValue).toBeCloseTo(2500, 6)
+    expect(fromHistory.estimated).toBe(false)
+
+    const fromLive = valueAtMonth(txns, '2026-08', {
+      priceCache: { THYAO: { price: 300 } },
+      fxRates: FX,
+      priceHistory: {},
+      fxHistory: { '2026-08': FX },
+    })
+    expect(fromLive.investedValue).toBeCloseTo(3000, 6)
+    expect(fromLive.estimated).toBe(true)
+
+    const fromCost = valueAtMonth(txns, '2026-08', {
+      fxRates: FX,
+      priceHistory: {},
+      fxHistory: { '2026-08': FX },
+    })
+    expect(fromCost.investedValue).toBeCloseTo(1000, 6)
+    expect(fromCost.estimated).toBe(true)
   })
 })

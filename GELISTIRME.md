@@ -26,6 +26,7 @@ GitHub deposu: `https://github.com/emrecanunal/portfolio-dashboard` · dal: `mai
 | `src/pages/` | Sayfalar (Dashboard, Transactions, FIRE, Settings…) | Bir sayfanın düzenini değiştirirken |
 | `src/components/` | Tekrar kullanılan parçalar; `charts/` grafikler, `ui/` düğme-modal gibi temel öğeler, `modals/` işlem ekleme penceresi | Görsel bileşen eklerken |
 | `src/lib/calculations.js` | **Tüm para matematiği** — bakiye, dağılım, kâr/zarar | Hesap mantığı değişince. En kritik dosya. |
+| `src/lib/history.js` · `historyApi.js` | Ay sonu fiyat/kur arşivi — performans grafiğinin belleği | Grafik geçmişiyle ilgili her şey |
 | `src/lib/store.js` | Uygulama state'i + localStorage'a otomatik kayıt | Yeni bir veri alanı eklerken |
 | `src/lib/priceApi.js` | Tarayıcıdan `/api/*` uçlarını çağıran katman | Fiyat kaynağı davranışı değişince |
 | `src/lib/fxApi.js` | Döviz kuru (Frankfurter/ECB) | Kur kaynağı değişince |
@@ -389,6 +390,63 @@ bul ya da o varlık türünü manuel fiyatla (**Ayarlar → Fiyat önbelleği**)
 
 ---
 
+## 7.0 Fiyat geçmişi arşivi
+
+Performans grafiği uzun süre yalan söyledi: geçmiş her ayı **bugünkü** fiyat ve
+kurla değerliyordu, dolayısıyla asla aşağı inemiyordu. Çizdiği şey performans
+değil, "ne kadar para koydum" idi.
+
+Çözüm bir arşiv: **sembol başına ayda bir kapanış fiyatı**, artı **ay başına bir
+kur anlık görüntüsü**.
+
+```
+priceHistory = { AFA: { '2026-07': 1.2099, '2026-08': 1.2786 }, ... }
+fxHistory    = { '2026-07': { TRY: 1, USD: 47.1, EUR: 55.0 }, ... }
+```
+
+**Neden aylık, günlük değil:** grafik zaten en fazla 60 nokta gösteriyor. Günlük
+çözünürlük aynı çizgiyi çizmek için ~30 kat yer isterdi. Bugünkü günlük değişim
+zaten `previousClose`'dan geliyor. 30 sembol × 60 ay ≈ 1800 sayı.
+
+Arşiv iki yoldan doluyor:
+
+1. **İleriye kayıt** — her fiyat yenilemesinde o ayın kutusuna yazılır. Ay içinde
+   üzerine yazar, yani ayın son yenilemesi o ayın kapanışı olur. Kendi kendini
+   düzeltir; ayrıca bir iş yapmanız gerekmez.
+2. **Geriye doldurma** — **Ayarlar → Fiyat geçmişi → Geçmişi indir**. Kaynaklardan
+   geçmişi çeker. Bir kez çalıştırmak yeter; bir de yeni varlık eklediğinizde.
+
+> Doldurma bir *kayıt* değil, işlem listenizden yapılan bir *yeniden inşa*.
+> Bu yüzden `mergeBackfill()` sizin kendi anlık kayıtlarınızı asla ezmez — biz
+> gördüysek o doğrudur. Fiyatı çıkarılmak zorunda kalınan aylar grafikte **içi
+> boş işaretle** çizilir ve altta kaç ay olduğu yazar.
+
+### Kaynaklar
+
+| Tür | Uç nokta | Güven |
+|---|---|---|
+| TEFAS | `fonFiyatBilgiGetir`, `periyod` 1/3/6/12/36/60 | ✅ Canlı fiyatla aynı uç |
+| BIST | İş Yatırım `HisseTekil`, geniş tarih aralığı | ✅ Canlı fiyatla aynı uç |
+| Global | Yahoo `chart?interval=1mo` | ❓ **Yeni bağımlılık, doğrula** |
+| Döviz | Frankfurter `/v1/A..B` | ✅ Ağustos 2026'da test edildi, tek istekle 169 gün |
+
+Global için Yahoo yeni: Finnhub'ın ücretsiz katmanı geçmiş mum verisi vermiyor,
+Stooq da Mart 2026'da kapandı. Doğrulamak için:
+
+```bash
+npm run probe:history
+curl -s "https://<vercel-adresin>/api/history?type=global&symbols=AAPL&months=12"
+```
+
+### Depolama şeması değişirse
+
+`store.js`'te artık `version` ve `migrate` var. **Yeni bir üst düzey alan
+eklerken sürümü artırın ve `migrate` içinde boşluğu doldurun** — yoksa geri dönen
+kullanıcılar o alanı `undefined` olarak görür. Yedek dosyası da `version: 2`
+oldu ve arşivleri içeriyor.
+
+---
+
 ## 7.1 Otomatik fiyat yenileme
 
 Uygulama açıkken fiyatlar kendiliğinden güncelleniyor. Açma/kapama ve sıklık
@@ -486,7 +544,9 @@ ikisinde de çalışmıyorsa kaynağın kendisi değişmiş/kapanmıştır.
 ## 9. Çok kullanılan komutlar
 
 ```bash
-npm run dev:full   # geliştirme (Vite 5173 + api proxy 3001)
+npm run dev:full     # geliştirme (Vite 5173 + api proxy 3001)
+npm run probe:funds  # fon fiyat kaynakları çalışıyor mu
+npm run probe:history # geçmiş fiyat kaynakları çalışıyor mu
 npm run build      # production derleme — göndermeden önce çalıştır
 npm run preview    # derlenmiş sürümü lokalde dene
 
