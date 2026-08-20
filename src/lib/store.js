@@ -29,6 +29,11 @@ const defaultSettings = {
     source: 'manual',
     lastError: null,
   },
+  // Automatic price refresh. The interval applies to BIST and global equities
+  // while their markets are open; funds run on their own much slower clock
+  // (see PriceAutoRefresh.jsx) because TEFAS publishes once a day.
+  autoRefreshEnabled: true,
+  autoRefreshMinutes: 5,
   // Equity-price live-data metadata
   finnhubApiKey: '',           // user-provided; empty = manual prices only
   priceMeta: {
@@ -139,13 +144,15 @@ export const usePortfolioStore = create(
       },
 
       // === PRICE REFRESH ===
-      // Refreshes equity prices via Finnhub. Only fetches symbols that look fetchable
-      // (assetType === 'global', no exchange suffix).
-      // onProgress: optional callback (current, total) for UI progress display.
+      // Refreshes held-asset prices from whichever source each asset type uses.
+      // onProgress: optional callback (source, current, total) for UI progress.
+      // options.sources: limit to a subset, e.g. ['bist','global']. Auto-refresh
+      //   passes this so funds aren't re-fetched on an equity tick.
       // Returns: { ok: boolean, fetched: number, errors: array, errorMessage?: string }
-      refreshPrices: async (onProgress) => {
+      refreshPrices: async (onProgress, options = {}) => {
         const state = get()
         const apiKey = state.settings.finnhubApiKey?.trim()
+        const sources = options.sources || ['bist', 'tefas', 'global']
 
         try {
           const { fetchAllPrices } = await import('./priceApi.js')
@@ -164,17 +171,25 @@ export const usePortfolioStore = create(
             else if (tx.type === 'sell') h.qty -= tx.quantity
             holdingsByKey.set(key, h)
           }
-          const heldHoldings = [...holdingsByKey.values()].filter((h) => h.qty > 0.0001)
+          const heldHoldings = [...holdingsByKey.values()]
+            .filter((h) => h.qty > 0.0001)
+            .filter((h) => sources.includes(h.assetType))
 
           if (heldHoldings.length === 0) {
+            // Nothing to fetch. Record the attempt per source so the auto-
+            // refresh scheduler stops asking, but only clear the top-level
+            // status on a full refresh — a fund-only tick finding no funds
+            // must not erase the error from the last equity refresh.
+            const isFullRefresh = sources.length === 3
             set((s) => ({
               settings: {
                 ...s.settings,
                 priceMeta: {
-                  fetchedAt: Date.now(),
-                  lastError: null,
-                  lastErrorSymbols: [],
-                  sourceStats: {},
+                  ...s.settings.priceMeta,
+                  ...(isFullRefresh
+                    ? { fetchedAt: Date.now(), lastError: null, lastErrorSymbols: [], sourceStats: {} }
+                    : {}),
+                  sourceFetchedAt: stampSources(s.settings.priceMeta?.sourceFetchedAt, sources),
                 },
               },
             }))
@@ -185,6 +200,7 @@ export const usePortfolioStore = create(
             holdings: heldHoldings,
             finnhubApiKey: apiKey,
             onProgress,
+            sources,
           })
 
           // Merge into priceCache, preserving any names from FonBul
@@ -197,6 +213,10 @@ export const usePortfolioStore = create(
               dayChangePct: quote.dayChangePct,
               currency: quote.currency || updatedCache[sym]?.currency || 'TRY',
               fetchedAt: quote.fetchedAt,
+              // Always overwrite `source`. A symbol the user once typed a price
+              // for was stuck on source:'manual' forever, so the "live" badge
+              // never came back even after a successful fetch.
+              source: quote.source || 'api',
               ...(quote.name ? { name: quote.name } : {}),
             }
           }
@@ -211,10 +231,14 @@ export const usePortfolioStore = create(
             settings: {
               ...s.settings,
               priceMeta: {
+                ...s.settings.priceMeta,
                 fetchedAt: Date.now(),
                 lastError: topLevelError,
                 lastErrorSymbols: errors.map((e) => e.symbol),
-                sourceStats,
+                // Merge rather than replace: a fund-only tick shouldn't wipe
+                // the equity sources' stats out of the Settings panel.
+                sourceStats: { ...s.settings.priceMeta?.sourceStats, ...sourceStats },
+                sourceFetchedAt: stampSources(s.settings.priceMeta?.sourceFetchedAt, sources),
               },
             },
           }))
@@ -290,6 +314,16 @@ export const usePortfolioStore = create(
     }
   )
 )
+
+// Record "we tried this source just now" for the sources a refresh covered.
+// The auto-refresh scheduler reads these to decide what is due: equities every
+// few minutes, funds every few hours.
+function stampSources(previous, sources) {
+  const now = Date.now()
+  const next = { ...(previous || {}) }
+  for (const s of sources) next[s] = now
+  return next
+}
 
 const PORTFOLIO_COLORS = ['#10b981', '#3b82f6', '#a855f7', '#f59e0b', '#ec4899', '#14b8a6']
 function pickColor(idx) {

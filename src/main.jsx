@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import { ThemeProvider } from './components/ThemeProvider.jsx'
 import { FxAutoRefresh } from './components/FxAutoRefresh.jsx'
+import { PriceAutoRefresh } from './components/PriceAutoRefresh.jsx'
 import { InstallPrompt } from './components/InstallPrompt.jsx'
 import './index.css'
 
@@ -12,6 +13,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <ThemeProvider>
         <FxAutoRefresh />
+        <PriceAutoRefresh />
         <App />
         <InstallPrompt />
       </ThemeProvider>

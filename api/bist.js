@@ -11,6 +11,8 @@
 //   - Used only if İş Yatırım fails or returns no data
 //   - More fragile (rate limits, 403/429 errors) — see comments below
 
+import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols } from './_http.js'
+
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
@@ -34,7 +36,7 @@ async function fetchIsYatirim(symbol) {
     `https://www.isyatirim.com.tr/_layouts/15/Isyatirim.Website/Common/Data.aspx/HisseTekil` +
     `?hisse=${encodeURIComponent(symbol)}&startdate=${startDate}&enddate=${endDate}`
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': UA,
       Accept: 'application/json,text/plain,*/*',
@@ -90,10 +92,10 @@ const COOKIE_TTL_MS = 60 * 60 * 1000
 async function warmUpYahooCookies() {
   if (_cookieJar && Date.now() - _cookieFetchedAt < COOKIE_TTL_MS) return _cookieJar
   try {
-    const res = await fetch('https://fc.yahoo.com', {
+    const res = await fetchWithTimeout('https://fc.yahoo.com', {
       headers: { 'User-Agent': UA, Accept: 'text/html,*/*' },
       redirect: 'manual',
-    })
+    }, 4000)
     let setCookieHeaders = []
     if (typeof res.headers.getSetCookie === 'function') {
       setCookieHeaders = res.headers.getSetCookie()
@@ -114,7 +116,7 @@ async function fetchYahoo(symbol) {
   const cookies = await warmUpYahooCookies()
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d`
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': UA,
       Accept: 'application/json,text/plain,*/*',
@@ -159,17 +161,9 @@ async function fetchOne(symbol) {
 // timeout (each İş Yatırım call is ~400-800ms). Running 6 in parallel keeps the
 // total under ~3s for typical portfolios while staying polite to the upstream.
 async function handle(symbolsParam) {
-  const symbols = (symbolsParam || '')
-    .split(',')
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean)
-
-  if (symbols.length === 0) {
-    return { results: {}, errors: [{ symbol: '', error: 'No symbols provided' }] }
-  }
-  if (symbols.length > 60) {
-    return { results: {}, errors: [{ symbol: '', error: 'Max 60 symbols per request' }] }
-  }
+  const parsed = parseSymbols(symbolsParam, 60)
+  if (parsed.error) return { results: {}, errors: [{ symbol: '', error: parsed.error }] }
+  const symbols = parsed.symbols
 
   const results = {}
   const errors = []
@@ -193,17 +187,16 @@ async function handle(symbolsParam) {
 
 // === Vercel handler ===
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-
-  if (req.method === 'OPTIONS') return res.status(204).end()
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
+  if (applyCors(req, res)) return
 
   try {
     const url = new URL(req.url, `http://${req.headers.host}`)
     const symbolsParam = url.searchParams.get('symbols') || ''
     const data = await handle(symbolsParam)
+    // BIST moves intraday, so keep this short — but five minutes of shared
+    // edge cache still collapses an auto-refresh across several devices into
+    // a single trip to İş Yatırım.
+    setCacheHeaders(res, { maxAge: 300, swr: 600 })
     res.status(200).json(data)
   } catch (err) {
     res.status(500).json({ error: err.message || 'Internal error' })

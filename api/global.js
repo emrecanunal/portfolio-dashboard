@@ -18,6 +18,8 @@
 // Stooq's daily quota is generous for personal use (no documented limit, but
 // "Exceeded the daily hits limit" appears at very high call counts).
 
+import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols } from './_http.js'
+
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
@@ -39,7 +41,7 @@ async function fetchOne(symbol) {
   }
   const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=d&f=sd2t2ohlcvn&h&e=csv`
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': UA,
       Accept: 'text/csv,*/*',
@@ -95,17 +97,9 @@ async function fetchOne(symbol) {
 
 // Common handler — parallel fetches with a small concurrency cap
 async function handle(symbolsParam) {
-  const symbols = (symbolsParam || '')
-    .split(',')
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean)
-
-  if (symbols.length === 0) {
-    return { results: {}, errors: [{ symbol: '', error: 'No symbols provided' }] }
-  }
-  if (symbols.length > 30) {
-    return { results: {}, errors: [{ symbol: '', error: 'Max 30 symbols per request' }] }
-  }
+  const parsed = parseSymbols(symbolsParam, 30)
+  if (parsed.error) return { results: {}, errors: [{ symbol: '', error: parsed.error }] }
+  const symbols = parsed.symbols
 
   const results = {}
   const errors = []
@@ -130,17 +124,13 @@ async function handle(symbolsParam) {
 
 // === Vercel handler ===
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-
-  if (req.method === 'OPTIONS') return res.status(204).end()
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
+  if (applyCors(req, res)) return
 
   try {
     const url = new URL(req.url, `http://${req.headers.host}`)
     const symbolsParam = url.searchParams.get('symbols') || ''
     const data = await handle(symbolsParam)
+    setCacheHeaders(res, { maxAge: 300, swr: 600 })
     res.status(200).json(data)
   } catch (err) {
     res.status(500).json({ error: err.message || 'Internal error' })

@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:tz": "TZ=Pacific/Auckland vitest run && TZ=America/Los_Angeles vitest run"
+    "test:tz": "TZ=Pacific/Auckland vitest run && TZ=America/Los_Angeles vitest run",
+    "probe:funds": "node scripts/probe-fund-sources.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

@@ -158,6 +158,7 @@ export default function SettingsPage() {
         </CardHeader>
         <CardBody className="space-y-4">
           <PriceStatusBar />
+          <AutoRefreshControl />
           <FinnhubKeyInput />
           <PriceCacheTable />
         </CardBody>
@@ -654,6 +655,99 @@ function SourceStatChip({ label, stat, t, ti }) {
           {ti(t.settingsPage.sourceStatsLine, { ok: stat.ok || 0, failed: stat.failed || 0 })}
         </div>
       </div>
+    </div>
+  )
+}
+
+// On/off plus the equity polling interval.
+//
+// Deliberately does NOT offer a fund interval. TEFAS publishes one price per
+// evening, so any number the user could pick there would be either wasteful or
+// meaningless — the note explains that rather than exposing a dial that cannot
+// help. Per-source timestamps are shown instead, which is the thing you
+// actually want to know when a price looks stale.
+const REFRESH_CHOICES = [1, 5, 15, 30]
+
+function AutoRefreshControl() {
+  const { t, ti, lang } = useT()
+  const enabled = usePortfolioStore((s) => s.settings.autoRefreshEnabled)
+  const minutes = usePortfolioStore((s) => s.settings.autoRefreshMinutes) ?? 5
+  const sourceFetchedAt = usePortfolioStore((s) => s.settings.priceMeta?.sourceFetchedAt)
+  const updateSettings = usePortfolioStore((s) => s.updateSettings)
+
+  const SOURCE_LABELS = { bist: 'BIST', tefas: 'TEFAS', global: 'Global' }
+  const stamps = Object.entries(SOURCE_LABELS).filter(([key]) => sourceFetchedAt?.[key])
+
+  return (
+    <div className="rounded-lg border border-border-subtle p-3 space-y-3">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-text-primary">{t.settingsPage.autoRefresh}</div>
+          <div className="text-2xs text-text-tertiary mt-0.5">
+            {t.settingsPage.autoRefreshDesc}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          onClick={() => updateSettings({ autoRefreshEnabled: !enabled })}
+          className={cn(
+            'relative w-11 h-6 rounded-full transition-colors shrink-0',
+            enabled ? 'bg-accent' : 'bg-bg-elevated border border-border-default'
+          )}
+        >
+          <span
+            className={cn(
+              'absolute top-1 w-4 h-4 rounded-full bg-white transition-all',
+              enabled ? 'left-6' : 'left-1'
+            )}
+          />
+          <span className="sr-only">
+            {enabled ? t.settingsPage.autoRefreshOn : t.settingsPage.autoRefreshOff}
+          </span>
+        </button>
+      </div>
+
+      {enabled && (
+        <>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-2xs text-text-tertiary">{t.settingsPage.autoRefreshEvery}</span>
+            {REFRESH_CHOICES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => updateSettings({ autoRefreshMinutes: m })}
+                className={cn(
+                  'px-2.5 py-1 rounded-md text-2xs font-medium border transition-colors tabular-nums',
+                  minutes === m
+                    ? 'bg-bg-elevated border-border-strong text-text-primary'
+                    : 'bg-bg-tertiary border-border-subtle text-text-secondary hover:text-text-primary'
+                )}
+              >
+                {ti(t.settingsPage.autoRefreshMinutes, { n: m })}
+              </button>
+            ))}
+          </div>
+
+          <p className="text-2xs text-text-tertiary leading-relaxed">
+            {ti(t.settingsPage.autoRefreshNote, { n: minutes })}
+          </p>
+
+          {stamps.length > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 border-t border-border-subtle">
+              {stamps.map(([key, label]) => (
+                <span key={key} className="text-2xs text-text-tertiary">
+                  {label}:{' '}
+                  <span className="text-text-secondary">
+                    {formatRelativeTime(sourceFetchedAt[key], lang)}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }

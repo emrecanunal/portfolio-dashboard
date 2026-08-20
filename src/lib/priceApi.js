@@ -110,12 +110,25 @@ async function fetchTefasBatch(symbols) {
 //   - Global: Finnhub (only if user provided a key — takes priority for intraday data)
 //   - BIST: /api/bist
 //   - TEFAS: /api/tefas
-export async function fetchAllPrices({ holdings, finnhubApiKey, onProgress }) {
+// `sources` limits the refresh to a subset, e.g. ['bist', 'global'].
+// Auto-refresh uses this because the three sources move on completely
+// different clocks: BIST and global equities tick through the trading day,
+// while TEFAS funds publish a single price per day. Polling funds every five
+// minutes would re-fetch the same number all day and burn through TEFAS's
+// 6-requests-per-minute allowance for nothing.
+export async function fetchAllPrices({
+  holdings,
+  finnhubApiKey,
+  onProgress,
+  sources = ['bist', 'tefas', 'global'],
+}) {
+  const wanted = new Set(sources)
   const globalSyms = []
   const bistSyms = []
   const tefasSyms = []
 
   for (const h of holdings) {
+    if (!wanted.has(h.assetType)) continue
     // Note: dotted US tickers like BRK.B, BF.B are legitimate global symbols.
     // BIST/TEFAS already routed below by assetType, so no need to exclude here.
     if (h.assetType === 'global') {

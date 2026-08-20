@@ -73,8 +73,26 @@ curl "http://localhost:3001/api/tefas?symbols=AFA,TI2"
 Göndermeden önce mutlaka:
 
 ```bash
+npm test           # para matematiği testleri — kırmızıysa gönderme
 npm run build      # hata verirse gönderme — Vercel'de de patlar
 ```
+
+### Testler
+
+`src/lib/calculations.test.js` ve `src/lib/marketHours.test.js`. Buradaki her
+test, elle bulunmuş gerçek bir hataya karşılık geliyor — biri kırmızıya
+dönerse arayüzde bir yerde yanlış bir sayı gösteriliyor demektir.
+
+```bash
+npm test           # hepsi
+npm run test:watch # yazarken sürekli
+npm run test:tz    # iki uç saat diliminde — tarih mantığı için
+```
+
+`test:tz` özellikle önemli: işlem tarihleri `'YYYY-MM-DD'` metni, saat ve saat
+dilimi taşımıyor. Bunları `new Date()` ile karşılaştırmak Türkiye'de üç saatlik
+kayma yaratıyordu ve **her ayın son günündeki işlemler grafikten düşüyordu.**
+Karşılaştırmalar artık metin üzerinden yapılıyor; öyle kalsın.
 
 ---
 
@@ -310,12 +328,65 @@ Bu tablo eskir; geri döndüğünde önce doğrula.
 |---|---|---|---|
 | BIST | İş Yatırım | ✅ Çalışıyor | Hem lokalde hem Vercel'de |
 | Global | ~~Stooq~~ → **Finnhub** | ⚠️ Anahtar gerekli | Stooq Mart 2026'da ücretsiz CSV'yi kapattı. Finnhub anahtarı **Ayarlar**'dan girilir, yedek JSON'a yazılmaz — ayrıca sakla. |
-| TEFAS | FonBul | ⚠️ Sadece lokalde | FonBul veri merkezi IP'lerini engelliyor. Vercel'den erişilemiyor; Frankfurt (`fra1`) bölgesi denendi, o da çözmedi (commit `21309b2` / `e74258c`). Fonları güncellemek için `npm run dev:full` ile lokalden yenile. |
+| TEFAS | **tefas.gov.tr** → FonBul | ❓ Doğrulanmalı | Ağustos 2026'da resmî TEFAS API'si birincil kaynak yapıldı; FonBul yedeğe düştü. Aşağıdaki testi bir kez çalıştır. |
 | Döviz kuru | Frankfurter (ECB) | ✅ Çalışıyor | Anahtar gerekmiyor |
+
+### Fon kaynağını doğrulama (bir kez yap)
+
+TEFAS 2026'da sitesini yeniledi ve `/api/funds/*` altında JSON API'si açtı.
+`api/tefas.js` artık önce onu deniyor, olmazsa FonBul'a düşüyor. Hangisinin
+nereden çalıştığını iki komut söyler:
+
+```bash
+npm run probe:funds AFA          # kendi makinenden
+curl -s "https://<vercel-adresin>/api/tefas?symbols=AFA" | head -40
+```
+
+Yanıttaki `source` alanı `"tefas"` diyorsa iş bitti — fonlar artık Vercel'de de,
+telefonda da güncelleniyor ve lokalden yenileme zorunluluğu kalktı.
+`"fonbul"` diyorsa TEFAS'ın uç noktası yine değişmiş demektir; probe çıktısının
+ham JSON'u neyin bozulduğunu gösterir.
+
+> **TEFAS dakikada ~6 istek kabul ediyor.** `api/tefas.js` bu yüzden istekleri
+> sırayla ve aralıklı atıyor, sonucu da Vercel edge'inde 30 dakika önbelleğe
+> alıyor. `MAX_SYMBOLS`'ü (şu an 8) yükseltmeden önce bunu düşün.
 
 Kaynaklar sözleşmesiz ve ücretsiz olduğu için kapanmaları normaldir. Biri düşerse
 panik yapma: önce lokal/sunucu ayrımını yap (bkz. bölüm 8), sonra ya yeni kaynak
 bul ya da o varlık türünü manuel fiyatla (**Ayarlar → Fiyat önbelleği**).
+
+---
+
+## 7.1 Otomatik fiyat yenileme
+
+Uygulama açıkken fiyatlar kendiliğinden güncelleniyor. Açma/kapama ve sıklık
+**Ayarlar → Varlık fiyatları → Otomatik yenileme** altında.
+
+Üç kaynağın üç ayrı saati var, bu yüzden tek bir "5 dakikada bir" kuralı yok
+(`src/components/PriceAutoRefresh.jsx`):
+
+| Kaynak | Piyasa açıkken | Piyasa kapalıyken |
+|---|---|---|
+| BIST | ayarlanan aralık (varsayılan 5 dk) | saatte bir |
+| Global | ayarlanan aralık | saatte bir |
+| TEFAS | — | 3 saatte bir, sadece 19:00'dan sonra |
+
+**Fonlar neden 5 dakikada bir değil:** TEFAS fonları günde **tek** fiyat
+açıklar, akşam. Fonu 5 dakikada bir sormak aynı sayıyı günde ~200 kez çekmek ve
+dakikada 6 isteklik kotayı boşa harcamak olur. Paramla gibi uygulamalarda da fon
+satırı günde bir kez değişir; oradaki "anlık gecikmeli" veri hisse tarafıdır.
+
+Ayrıca:
+
+- **Sekme arka plandayken durur.** Telefonda PWA kapalıyken ağ işi yapılmaz;
+  uygulamaya döndüğünde hemen bir kontrol yapılır.
+- **Hata olursa geri çekilir.** Art arda her başarısızlıkta bekleme iki katına
+  çıkar, en fazla bir saat. Tek bir başarı sayacı sıfırlar.
+- **Üst üste binmez.** Önceki yenileme bitmeden yeni tik atılmaz.
+
+Piyasa saatleri `src/lib/marketHours.js` içinde ve testleri var
+(`npm test`). Saatler cihazın saat dilimine göre değil, borsanın kendi saat
+dilimine göre hesaplanır.
 
 ---
 

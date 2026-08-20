@@ -1,15 +1,17 @@
 # Portfolio Dashboard · FIRE Tracker
 
-Multi-currency personal portfolio dashboard with **live prices for ALL asset classes — no API keys required**.
+Multi-currency personal portfolio dashboard with live prices for Turkish stocks, Turkish funds, global equities and cash.
 
 ## Features
 
 - 📊 **Multi-asset tracking**: BIST (Turkish stocks), TEFAS (Turkish funds), Global equities, Cash
 - 💱 **Live currency rates** (Frankfurter / European Central Bank)
-- 📈 **Live prices via free public sources** (no signups required):
-  - 🇹🇷 BIST → İş Yatırım
-  - 📊 TEFAS → FonBul (Halk Yatırım)
-  - 🌐 Global → Stooq
+- 📈 **Live prices via public sources**:
+  - 🇹🇷 BIST → İş Yatırım (no key)
+  - 📊 TEFAS → tefas.gov.tr, falling back to FonBul (no key)
+  - 🌐 Global → Finnhub (free key, entered in Settings)
+- 🔄 **Automatic refresh** on a per-source schedule — equities while their
+  markets are open, funds a few times a day (TEFAS publishes once each evening)
 - 🎯 **5-stage FIRE journey**: Coast → Barista → Lean → Regular → Fat
 - 💰 **Sub-portfolios** with custom names + colors
 - 🌐 **Multi-currency display**: TRY / USD / EUR
@@ -109,25 +111,29 @@ npm run dev:full
 
 Open http://localhost:5173.
 
-## Optional: intraday prices via Finnhub
+## Global stocks need a Finnhub key
 
-By default, global stocks use end-of-day prices via Stooq (no key needed). If you want **intraday** (live during market hours):
+Stooq closed its free CSV endpoint in March 2026, so `api/global.js` no longer
+returns data on its own and global stocks need a Finnhub key. It is free and
+takes a minute:
 
 1. Sign up free at [finnhub.io](https://finnhub.io) (no credit card)
 2. Copy your API key
 3. In the app: **Settings → Asset prices → Finnhub API key** → paste it
 4. Click "Refresh all prices" — global stocks now use Finnhub
 
-You can clear the field anytime to fall back to Stooq.
+The key is stored in your browser only and is deliberately stripped from JSON
+backups, so keep a copy somewhere else.
 
 ## Project structure
 
 ```
 portfolio-dashboard/
 ├── api/                  # Vercel serverless functions / Express routes
+│   ├── _http.js          # Shared timeout / CORS / cache helpers
 │   ├── bist.js           # BIST stock prices via İş Yatırım
-│   ├── tefas.js          # TEFAS fund prices via FonBul
-│   └── global.js         # Global equity prices via Stooq
+│   ├── tefas.js          # TEFAS fund prices via tefas.gov.tr → FonBul
+│   └── global.js         # Global equity prices via Stooq (see note below)
 ├── public/               # Static assets (icons, manifest, service worker)
 ├── src/
 │   ├── components/       # UI components
