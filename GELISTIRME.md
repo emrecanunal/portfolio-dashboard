@@ -108,8 +108,46 @@ Adds toAmount/toCurrency to the transaction model and splits cash
 per currency in the allocation donut."
 ```
 
-Terminalde çok satırlı yazmak zorsa `git commit` (mesajsız) yaz, açılan editörde
-mesajı yaz, `:wq` ile kaydet-çık.
+### Editör açılırsa ne yapacaksın
+
+`git commit` mesajsız çalıştırıldığında bir metin editörü açılır. Varsayılan
+genelde **vim**'dir ve çıkışı sezgisel değildir — bir kere takıldın, bir daha
+takılmamak için önce şunu bir defalığına çalıştır:
+
+```bash
+git config --global core.editor nano
+```
+
+nano çok daha kolay: yaz, **Ctrl+O** + Enter ile kaydet, **Ctrl+X** ile çık.
+Komutlar zaten ekranın altında yazılı durur.
+
+Yine de karşına vim çıkarsa:
+
+| Ne istiyorsun | Tuşlar |
+|---|---|
+| Yazmaya başla | `i` |
+| **Kaydet ve çık** | `Esc` → `:wq` → Enter |
+| **Kaydetmeden çık** (commit iptal) | `Esc` → `:q!` → Enter |
+
+**`Esc`'e basmadan `:wq` yazarsan komut çalışmaz, metnin içine yazılır.** Ekranda
+`:wq` görüyorsan olan budur: `Esc`'e bas, `:q!` ile çık, baştan dene.
+
+En basiti editörü hiç açtırmamak — hazır mesajı olduğu gibi kabul et:
+
+```bash
+git revert HEAD --no-edit
+git merge --no-edit <dal>
+```
+
+### Yarım kalan işlem tuzağı
+
+`git revert` veya `git merge` sırasında editörden çıkıp commit'i iptal edersen
+**değişiklik sahnelenmiş (staged) halde kalır.** Sonra başka bir şey için
+`git commit -m "..."` yazarsan, o bekleyen değişikliği yanlış mesajla
+kaydedersin.
+
+Bu yüzden: **`git commit`'ten önce her zaman `git status` çalıştır.** Sahnede
+beklemediğin bir şey varsa `git restore --staged .` ile indir.
 
 ### Küçük ama faydalı komutlar
 
@@ -129,10 +167,23 @@ git diff HEAD~1 src/lib/store.js    # bir dosyanın son değişimi
 | `git add` yaptım, geri alayım (dosya kalsın) | `git restore --staged .` |
 | Son commit'i geri al, değişiklikler dursun | `git reset --soft HEAD~1` |
 | Son commit'in mesajını düzelt (henüz push etmediysen) | `git commit --amend -m "Yeni mesaj"` |
-| Push ettiğim bir commit'i güvenle geri al | `git revert <commit-hash>` |
+| Push ettiğim bir commit'i güvenle geri al | `git revert <commit-hash> --no-edit` |
 
 > Push edilmiş bir şeyi `reset` ile silmeye çalışma — `revert` kullan. `revert`
 > geçmişi bozmadan "bunu geri alan" yeni bir commit üretir.
+
+**Push edilmiş son commit'in mesajını düzeltmek** istisna olarak yapılabilir, ama
+üç şart birden sağlanmalı: (1) düzelteceğin commit **en üstteki** olmalı,
+(2) depoda senden başka kimse çalışmıyor olmalı, (3) `git rev-parse main` ile
+`git rev-parse origin/main` **aynı** olmalı.
+
+```bash
+git commit --amend -m "Doğru mesaj"
+git push --force-with-lease
+```
+
+`--force-with-lease`, düz `--force`'tan farklı olarak origin'de beklemediğin bir
+değişiklik varsa reddeder. Düz `--force` asla kullanma.
 
 ### Riskli bir şey denerken: dal aç
 
@@ -251,6 +302,21 @@ kaynaklar ve zamanla sessizce bozulabilirler. "Bazı semboller başarısız" uya
 `git status` çıktısında `M` işaretli dosyalar varsa, o senin yarım bıraktığın iştir.
 `git diff` ile ne yaptığını hatırlarsın.
 
+### Veri kaynaklarının durumu — Ağustos 2026
+
+Bu tablo eskir; geri döndüğünde önce doğrula.
+
+| Varlık | Kaynak | Durum | Not |
+|---|---|---|---|
+| BIST | İş Yatırım | ✅ Çalışıyor | Hem lokalde hem Vercel'de |
+| Global | ~~Stooq~~ → **Finnhub** | ⚠️ Anahtar gerekli | Stooq Mart 2026'da ücretsiz CSV'yi kapattı. Finnhub anahtarı **Ayarlar**'dan girilir, yedek JSON'a yazılmaz — ayrıca sakla. |
+| TEFAS | FonBul | ⚠️ Sadece lokalde | FonBul veri merkezi IP'lerini engelliyor. Vercel'den erişilemiyor; Frankfurt (`fra1`) bölgesi denendi, o da çözmedi (commit `21309b2` / `e74258c`). Fonları güncellemek için `npm run dev:full` ile lokalden yenile. |
+| Döviz kuru | Frankfurter (ECB) | ✅ Çalışıyor | Anahtar gerekmiyor |
+
+Kaynaklar sözleşmesiz ve ücretsiz olduğu için kapanmaları normaldir. Biri düşerse
+panik yapma: önce lokal/sunucu ayrımını yap (bkz. bölüm 8), sonra ya yeni kaynak
+bul ya da o varlık türünü manuel fiyatla (**Ayarlar → Fiyat önbelleği**).
+
 ---
 
 ## 8. Sık karşılaşılan sorunlar
@@ -288,6 +354,29 @@ mesajı daha okunaklıdır.
 **Fiyatlar gelmiyor**
 `npm run dev:full` yerine sadece `npm run dev` çalıştırmış olabilirsin — 3001'deki
 proxy ayakta değildir. Ayaktaysa `curl http://localhost:3001/api/health` ile teyit et.
+
+**Kurulu uygulama (PWA) bembeyaz açılıyor**
+Sekme başlığı doğru ama ekran boşsa, konsolda büyük ihtimalle
+`Expected a JavaScript-or-Wasm module script ... MIME type of "text/html"` yazar.
+Anlamı: service worker eski bir `index.html` sunuyor, o da artık var olmayan bir
+JS dosyası istiyor; `vercel.json`'daki SPA yönlendirmesi 404 yerine HTML döndürüyor.
+Kurtarma — DevTools → Application → **Service Workers → Unregister**, sonra
+**Cache storage** altındaki `portfolio-dashboard-*` girdisini sil, `Cmd+Shift+R`.
+"Clear site data" düğmesini **kullanma**, localStorage'daki portföyünü siler.
+`public/sw.js` Ağustos 2026'da bunu önleyecek şekilde düzeltildi (HTML için
+"önce ağ"); oradaki yorumu silme, sebebi orada yazılı.
+
+**Bir fiyat kaynağı hata veriyor**
+"Bazı semboller başarısız" uyarısı yanıltıcıdır — genelde tek tek semboller değil,
+o kaynağın tamamı düşmüş olur. Hangi katmanın bozulduğunu şöyle ayır:
+
+```bash
+curl "http://localhost:3001/api/bist?symbols=THYAO"    # lokalden
+curl "https://<vercel-adresin>/api/bist?symbols=THYAO"  # sunucudan
+```
+
+Lokalde çalışıp sunucuda çalışmıyorsa kaynak veri merkezi IP'lerini engelliyordur;
+ikisinde de çalışmıyorsa kaynağın kendisi değişmiş/kapanmıştır.
 
 ---
 
