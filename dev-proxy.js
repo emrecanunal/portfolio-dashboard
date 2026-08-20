@@ -6,6 +6,22 @@
 // deploying.
 
 import express from 'express'
+import { readFileSync } from 'node:fs'
+
+// Vercel injects environment variables; locally they come from .env.local,
+// which .gitignore already covers. ALPHAVANTAGE_KEY is read server-side on
+// purpose, so without this the local /api/history would answer AV_NO_KEY
+// while the deployed one worked — the most confusing kind of difference.
+try {
+  for (const line of readFileSync(new URL('./.env.local', import.meta.url), 'utf8').split('\n')) {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
+    if (!match) continue
+    const value = match[2].replace(/^['"]|['"]$/g, '').trim()
+    if (value && !process.env[match[1]]) process.env[match[1]] = value
+  }
+} catch {
+  // No .env.local is normal.
+}
 import { bistHandle } from './api/bist.js'
 import { tefasHandle } from './api/tefas.js'
 import { globalHandle } from './api/global.js'

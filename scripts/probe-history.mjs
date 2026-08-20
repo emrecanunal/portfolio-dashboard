@@ -34,6 +34,10 @@
 // For a single run without storing anything:
 //
 //   FINNHUB_KEY=$(pbpaste) npm run probe:history
+//
+// ALPHAVANTAGE_KEY belongs in the same file. It is what api/history.js uses for
+// global equities, and unlike the Finnhub key it is read server-side only, so
+// it never reaches the browser or a JSON backup.
 
 import { historyHandle } from '../api/history.js'
 import { warmUpYahooCookies, yahooCookieState, yahooCrumb } from '../api/_http.js'
@@ -160,6 +164,15 @@ if (rows.some((r) => r.type === 'global' && !r.ok)) {
   )
   if (state.hasCookies && state.hasCrumb) {
     console.log('  → both present; if the fetch still fails, Yahoo is blocking this address.')
+  }
+
+  if (!process.env.ALPHAVANTAGE_KEY) {
+    console.log(
+      'Alpha Vantage: NO KEY — this is the primary global source now that Yahoo,\n' +
+        '  Stooq and Finnhub have all closed. Get a free one at\n' +
+        '  alphavantage.co/support/#api-key and add it to .env.local as\n' +
+        '  ALPHAVANTAGE_KEY=..., then set the same value in the Vercel dashboard.'
+    )
   }
 
   const key = process.env.FINNHUB_KEY

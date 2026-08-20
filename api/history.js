@@ -128,9 +128,88 @@ async function bistHistory(symbol, months, window) {
   )
 }
 
-// === Global (Yahoo, monthly candles) ===
+// === Global (Alpha Vantage first, Yahoo second) ===
+//
+// Alpha Vantage is the primary because it is the only free source that still
+// answers. The August 2026 probe closed the other three: Yahoo issues cookies
+// but refuses a crumb, Finnhub's free plan returns 403 for candles, and Stooq
+// shut its free CSV in March.
+//
+// One request returns twenty years of monthly closes for a symbol, so the
+// windowing the client does for BIST is pointless here — the whole history
+// arrives at once and gets filtered afterwards. The free tier allows 25
+// requests a day, which is generous for something run occasionally against a
+// handful of symbols, and stingy if you ever call it in a loop. Don't.
+//
+// KEY: set ALPHAVANTAGE_KEY in the Vercel dashboard (and in .env.local for
+// local development). It is read server-side on purpose — unlike the Finnhub
+// key, it never reaches the browser, never lands in localStorage, and cannot
+// leak through a JSON backup.
+//
+// WHICH CLOSE: the raw "4. close", not the adjusted one. This app values a
+// position as (shares held that month) × (price that month), and shares come
+// from the transaction list, so the raw close is the internally consistent
+// choice. Adjusted closes are back-adjusted for splits and would double-count
+// the adjustment against a share count that is already historical. Neither
+// handles a split the user never recorded — if a holding ever splits, add the
+// corresponding transaction or its whole history will be wrong either way.
+
+// Exported for the tests: Alpha Vantage signals trouble with a 200 and a
+// human-readable message, so the failure modes live in the body, not the status.
+export function parseAlphaVantageMonthly(json) {
+  if (json?.['Error Message']) throw new Error('AV_BAD_SYMBOL')
+  // "Note" is the classic rate-limit reply; newer accounts get "Information".
+  if (json?.Note) throw new Error('AV_RATE_LIMIT')
+  if (json?.Information) {
+    const text = String(json.Information)
+    throw new Error(/rate limit|per day|frequency/i.test(text) ? 'AV_RATE_LIMIT' : 'AV_REJECTED')
+  }
+
+  const series = json?.['Monthly Adjusted Time Series'] || json?.['Monthly Time Series']
+  if (!series || typeof series !== 'object') throw new Error('AV_NO_DATA')
+
+  const points = Object.entries(series).map(([ymd, row]) => ({
+    ymd,
+    value: toNumber(row?.['4. close']),
+  }))
+  return toMonthEnds(points)
+}
+
+async function alphaVantageHistory(symbol) {
+  const key = process.env.ALPHAVANTAGE_KEY
+  if (!key) throw new Error('AV_NO_KEY')
+
+  const url =
+    'https://www.alphavantage.co/query?function=TIME_SERIES_MONTHLY_ADJUSTED' +
+    `&symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(key)}`
+
+  const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } }, 9000)
+  if (!res.ok) throw new Error(`AV_HTTP_${res.status}`)
+  return parseAlphaVantageMonthly(await res.json())
+}
 
 async function globalHistory(symbol, months, window) {
+  // Alpha Vantage first; fall through to Yahoo so that if Yahoo ever reopens,
+  // or if no Alpha Vantage key is configured, there is still a path.
+  let avError = null
+  try {
+    return await alphaVantageHistory(symbol)
+  } catch (err) {
+    avError = err.message
+    // A missing symbol is the source answering correctly; retrying elsewhere
+    // will not conjure data, and a rate limit means backing off, not hammering
+    // a second provider.
+    if (avError === 'AV_BAD_SYMBOL' || avError === 'AV_RATE_LIMIT') throw err
+  }
+
+  try {
+    return await yahooHistory(symbol, months, window)
+  } catch (yhError) {
+    throw new Error(`AV:${avError} | YH:${yhError.message}`)
+  }
+}
+
+async function yahooHistory(symbol, months, window) {
   const { start, end } = resolveWindow(months, window)
   // period1/period2 rather than range=, so a windowed request asks for exactly
   // the months the client is walking.
@@ -192,10 +271,41 @@ export function normaliseYmd(value) {
   return isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : ''
 }
 
+// Parse a price string written in either convention.
+//
+// This used to assume Turkish formatting and strip every dot as a thousands
+// separator. That is right for "1.234,56" and catastrophic for Alpha Vantage's
+// "210.2500", which became 2102500 — a number the chart would have drawn
+// without complaint. Sources disagree about separators, so decide per string:
+// whichever of . or , appears LAST is the decimal point, and the other is
+// grouping.
 export function toNumber(value) {
   if (typeof value === 'number') return isFinite(value) ? value : 0
   if (typeof value !== 'string') return 0
-  const n = parseFloat(value.trim().replace(/\./g, '').replace(',', '.'))
+
+  const text = value.trim()
+  if (!text) return 0
+
+  const lastDot = text.lastIndexOf('.')
+  const lastComma = text.lastIndexOf(',')
+
+  let decimal = null
+  if (lastDot >= 0 && lastComma >= 0) {
+    decimal = lastDot > lastComma ? '.' : ','
+  } else if (lastComma >= 0) {
+    // "1,27856" is a decimal comma; "1,234,567" is English grouping.
+    decimal = text.split(',').length === 2 ? ',' : null
+  } else if (lastDot >= 0) {
+    // "210.2500" is a decimal point; "1.234.567" is Turkish grouping.
+    decimal = text.split('.').length === 2 ? '.' : null
+  }
+
+  const grouping = decimal === '.' ? ',' : '.'
+  let normalised = text.split(grouping).join('')
+  if (decimal === ',') normalised = normalised.replace(',', '.')
+  if (decimal === null) normalised = normalised.split(',').join('').split('.').join('')
+
+  const n = parseFloat(normalised)
   return isFinite(n) ? n : 0
 }
 
