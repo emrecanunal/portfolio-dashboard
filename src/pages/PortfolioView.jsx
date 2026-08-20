@@ -21,6 +21,7 @@ import {
   computeAllocation,
   computeAllocationDetail,
   computeCashByCurrency,
+  computeDayChange,
   computePerformanceSeries,
   computeFireMetrics,
   computeMonthlySavingsSeries,
@@ -37,6 +38,7 @@ import { PerformanceLine } from '../components/charts/PerformanceLine.jsx'
 import { FireProgressCard } from '../components/charts/FireProgressCard.jsx'
 import { AddTransactionModal } from '../components/modals/AddTransactionModal.jsx'
 import { StaleRatesBanner } from '../components/StaleRatesBanner.jsx'
+import { DataWarnings } from '../components/DataWarnings.jsx'
 
 export function PortfolioView({ scope = { type: 'master' } }) {
   const { t, ti } = useT()
@@ -102,8 +104,8 @@ export function PortfolioView({ scope = { type: 'master' } }) {
 
   // Resolve active FIRE stage → target
   const stageTargets = useMemo(
-    () => computeStageTargets(settings.monthlyExpensesUSD),
-    [settings.monthlyExpensesUSD]
+    () => computeStageTargets(settings.monthlyExpensesUSD, settings.withdrawalRate),
+    [settings.monthlyExpensesUSD, settings.withdrawalRate]
   )
   const activeStage = stageTargets.find((s) => s.id === settings.activeFireStage) || stageTargets[2]
   const fireTargetUSD = activeStage.targetUSD
@@ -141,19 +143,15 @@ export function PortfolioView({ scope = { type: 'master' } }) {
     [scopedTxns]
   )
 
-  // Daily change estimate
-  const dailyChange = useMemo(() => {
-    if (performance.length < 2) return { abs: 0, pct: 0 }
-    const last = performance[performance.length - 1].value
-    const prev = performance[performance.length - 2].value
-    const abs = (last - prev) / 30
-    const pct = prev > 0 ? (abs / prev) * 100 : 0
-    return { abs, pct }
-  }, [performance])
+  // Today's move, summed from each position's previous close — the same numbers
+  // the asset-breakdown card shows, so the two can never disagree.
+  // (This used to be one thirtieth of the last monthly delta, labelled "today".)
+  const dailyChange = useMemo(() => computeDayChange(allocationDetail), [allocationDetail])
 
   return (
     <div className="space-y-6">
       <StaleRatesBanner />
+      <DataWarnings portfolioId={portfolioId} />
       {/* === HEADER === */}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
@@ -216,9 +214,23 @@ export function PortfolioView({ scope = { type: 'master' } }) {
         />
         <StatCard
           label={t.dashboard.dailyChange}
-          value={formatSignedCurrency(dailyChange.abs, 'TRY', { compact: true, decimals: 1 })}
-          sublabel={`${formatPercent(dailyChange.pct, { withSign: true })} ${t.dashboard.today}`}
-          valueClass={dailyChange.abs >= 0 ? 'text-success' : 'text-danger'}
+          value={
+            dailyChange.known
+              ? formatSignedCurrency(dailyChange.absTRY, 'TRY', { compact: true, decimals: 1 })
+              : '—'
+          }
+          sublabel={
+            dailyChange.known
+              ? `${formatPercent(dailyChange.pct, { withSign: true })} ${t.dashboard.today}`
+              : t.dashboard.noDayData
+          }
+          valueClass={
+            !dailyChange.known
+              ? 'text-text-tertiary'
+              : dailyChange.absTRY >= 0
+                ? 'text-success'
+                : 'text-danger'
+          }
         />
         <StatCard
           label={t.dashboard.totalPL}
@@ -247,6 +259,7 @@ export function PortfolioView({ scope = { type: 'master' } }) {
         annualizedReturn={fireMetrics.annualizedReturn}
         savingsSeries={savingsSeries}
         monthlyExpensesTRY={monthlyExpensesTRY}
+        fireMultiplier={activeStage.multiplier}
       />
 
       {/* === ALLOCATION + PERFORMANCE === */}

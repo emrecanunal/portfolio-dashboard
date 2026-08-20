@@ -1,29 +1,51 @@
 // FIRE stage definitions.
-// Each stage is a multiplier applied to annual expenses.
-// 25x = 4% safe-withdrawal rule (standard FIRE math).
+//
+// The whole ladder hangs off ONE number: the safe withdrawal rate. A 4% rate
+// means a portfolio must be 1/0.04 = 25× annual expenses to cover them forever.
+// Drop to 3% and that becomes 33.3×; push to 5% and it is 20×.
+//
+// Each stage is therefore expressed as two independent dials:
+//   coverage     — what fraction of "covered forever" this stage represents
+//   expenseScale — whose expenses we are covering (lean / comfortable / luxury)
+//
+// target = annualExpenses × expenseScale × (coverage / withdrawalRate)
+//
+// At the default 4% this reproduces the familiar ladder exactly —
+// 7×, 12.5×, 25×, 50×, 100× — so nobody's existing numbers move.
 //
 // Stage philosophy:
-//   - Coast FIRE: enough invested that, untouched, it grows to full FIRE by retirement age. ~7×.
-//   - Barista FIRE: covers ~50% of expenses passively; part-time work covers the rest. ~12.5×.
-//   - Lean FIRE: full coverage at minimal expense level. 25×.
-//   - Regular FIRE: full coverage at comfortable expense level. 25× of comfort budget (≈ 2× lean).
-//   - Fat FIRE: full coverage at luxury expense level. 25× of luxury budget (≈ 4× lean).
+//   - Coast FIRE: enough invested that, untouched, it grows to full FIRE by
+//     retirement age. Conventionally ~7× at 4%, i.e. 28% of the way there.
+//   - Barista FIRE: covers ~50% of expenses passively; part-time work covers
+//     the rest.
+//   - Lean FIRE: full coverage at a minimal expense level.
+//   - Regular FIRE: full coverage at a comfortable expense level (2× lean).
+//   - Fat FIRE: full coverage at a luxury expense level (4× lean).
+
+export const DEFAULT_WITHDRAWAL_RATE = 0.04
 
 export const FIRE_STAGES = [
-  { id: 'coast',   key: 'coast',   multiplier: 7,    expenseScale: 1.0, color: '#fbbf24' },
-  { id: 'barista', key: 'barista', multiplier: 12.5, expenseScale: 1.0, color: '#fb923c' },
-  { id: 'lean',    key: 'lean',    multiplier: 25,   expenseScale: 1.0, color: '#10b981' },
-  { id: 'regular', key: 'regular', multiplier: 25,   expenseScale: 2.0, color: '#3b82f6' },
-  { id: 'fat',     key: 'fat',     multiplier: 25,   expenseScale: 4.0, color: '#a855f7' },
+  { id: 'coast',   key: 'coast',   coverage: 0.28, expenseScale: 1.0, color: '#fbbf24' },
+  { id: 'barista', key: 'barista', coverage: 0.5,  expenseScale: 1.0, color: '#fb923c' },
+  { id: 'lean',    key: 'lean',    coverage: 1.0,  expenseScale: 1.0, color: '#10b981' },
+  { id: 'regular', key: 'regular', coverage: 1.0,  expenseScale: 2.0, color: '#3b82f6' },
+  { id: 'fat',     key: 'fat',     coverage: 1.0,  expenseScale: 4.0, color: '#a855f7' },
 ]
 
-// Compute target USD for each stage given monthly expenses (USD, lean baseline).
-export function computeStageTargets(monthlyExpensesUSD) {
+// Compute target USD for each stage given monthly expenses (USD, lean baseline)
+// and the safe withdrawal rate the user picked on the FIRE page.
+export function computeStageTargets(monthlyExpensesUSD, withdrawalRate = DEFAULT_WITHDRAWAL_RATE) {
+  const rate = withdrawalRate > 0 ? withdrawalRate : DEFAULT_WITHDRAWAL_RATE
   const annualExpenses = monthlyExpensesUSD * 12
-  return FIRE_STAGES.map((stage) => ({
-    ...stage,
-    targetUSD: annualExpenses * stage.expenseScale * stage.multiplier,
-  }))
+  return FIRE_STAGES.map((stage) => {
+    // e.g. coverage 1.0 at 4% → 25×; coverage 0.28 at 4% → 7×
+    const multiplier = stage.coverage / rate
+    return {
+      ...stage,
+      multiplier,
+      targetUSD: annualExpenses * stage.expenseScale * multiplier,
+    }
+  })
 }
 
 // Find the stage object matching a stage id.
@@ -35,8 +57,13 @@ export function getStageById(id) {
 // Returns { activeStageIndex, percentOnBar, percentToActive } where percentOnBar is 0–1
 // representing position along the bar (with stops evenly spaced) and percentToActive is
 // progress to the user-selected active stage.
-export function computeJourneyPosition({ currentValueUSD, monthlyExpensesUSD, activeStageId }) {
-  const stages = computeStageTargets(monthlyExpensesUSD)
+export function computeJourneyPosition({
+  currentValueUSD,
+  monthlyExpensesUSD,
+  activeStageId,
+  withdrawalRate = DEFAULT_WITHDRAWAL_RATE,
+}) {
+  const stages = computeStageTargets(monthlyExpensesUSD, withdrawalRate)
   const activeStageIndex = stages.findIndex((s) => s.id === activeStageId)
 
   // Find which stage they've passed and where they are between stages

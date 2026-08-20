@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowDownLeft, ArrowUpRight, Sparkles, ArrowLeftRight } from 'lucide-react'
 import { useT } from '../../i18n/useT.js'
 import { usePortfolioStore } from '../../lib/store.js'
-import { computePortfolioSummary } from '../../lib/calculations.js'
+import { computePortfolioSummary, computeHoldings, todayYmd } from '../../lib/calculations.js'
 import { convertToTRY, formatCurrency, formatFxRate, quoteFxRate } from '../../lib/currency.js'
 import { Modal } from '../ui/Modal.jsx'
 import { Button } from '../ui/Primitives.jsx'
@@ -26,7 +26,7 @@ const CURRENCY_OPTIONS = ['TRY', 'USD', 'EUR']
 // `defaultPortfolioId` pre-selects a specific sub-portfolio when opening from
 // a portfolio detail page. The user can still change it via the dropdown.
 export function AddTransactionModal({ open, onClose, existingTxn = null, defaultPortfolioId = null }) {
-  const { t } = useT()
+  const { t, ti } = useT()
   const transactions = usePortfolioStore((s) => s.transactions)
   const subPortfolios = usePortfolioStore((s) => s.subPortfolios)
   const priceCache = usePortfolioStore((s) => s.priceCache)
@@ -56,8 +56,16 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
   // === PRICE AUTOFILL from priceCache when symbol matches ===
   // When user types a known symbol and price is empty, auto-fill the price.
   // Once user edits the price, autofill won't override it again.
+  //
+  // Only for transactions dated TODAY. The cache holds the current price; on a
+  // back-dated entry that silently writes the wrong cost basis, and a cost
+  // basis is not something the user can eyeball as wrong later.
   useEffect(() => {
     if (form.type !== 'buy' && form.type !== 'sell') return
+    if (form.date !== todayYmd()) {
+      setPriceAutofilled(false)
+      return
+    }
     const sym = form.symbol.trim().toUpperCase()
     if (!sym) {
       setPriceAutofilled(false)
@@ -69,7 +77,23 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
       setForm((prev) => ({ ...prev, price: String(cached.price), currency: cached.currency }))
       setPriceAutofilled(true)
     }
-  }, [form.symbol, form.type, priceCache])
+  }, [form.symbol, form.type, form.date, priceCache])
+
+  // === How many units of this symbol are actually held in this portfolio? ===
+  // Used to stop a sell that would push the position negative — which used to
+  // make it disappear from the holdings list entirely, cost basis and all.
+  const heldQty = useMemo(() => {
+    if (form.type !== 'sell') return null
+    const sym = form.symbol.trim().toUpperCase()
+    if (!sym || !form.portfolioId) return null
+    const scoped = transactions.filter(
+      (tx) => tx.portfolioId === form.portfolioId && (!isEdit || tx.id !== existingTxn.id)
+    )
+    return computeHoldings(scoped).find((h) => h.symbol === sym)?.qty ?? 0
+  }, [form.type, form.symbol, form.portfolioId, transactions, isEdit, existingTxn])
+
+  const sellsMoreThanHeld =
+    form.type === 'sell' && heldQty !== null && (parseFloat(form.quantity) || 0) > heldQty + 0.0001
 
   // If user manually changes the price, stop overriding it
   const handlePriceChange = (val) => {
@@ -151,6 +175,15 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
         setSubmitError(t.txn.pleaseFillRequired)
         return
       }
+    }
+    if (form.type === 'sell' && heldQty !== null && qty > heldQty + 0.0001) {
+      setSubmitError(
+        ti(t.txn.sellExceedsHolding, {
+          held: formatQty(heldQty),
+          symbol: form.symbol.trim().toUpperCase(),
+        })
+      )
+      return
     }
     if (form.type === 'deposit' || form.type === 'withdraw') {
       if (!price) {
@@ -328,11 +361,28 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
                   type="number"
                   step="any"
                   min="0"
-                  className="input-field tabular-nums"
+                  className={cn(
+                    'input-field tabular-nums',
+                    sellsMoreThanHeld && 'border-danger/50'
+                  )}
                   value={form.quantity}
                   onChange={(e) => update({ quantity: e.target.value })}
                   placeholder="0"
                 />
+                {/* Show the balance while typing, not only after a failed save. */}
+                {form.type === 'sell' && heldQty !== null && form.symbol.trim() && (
+                  <p
+                    className={cn(
+                      'text-2xs mt-1 tabular-nums',
+                      sellsMoreThanHeld ? 'text-danger' : 'text-text-tertiary'
+                    )}
+                  >
+                    {ti(sellsMoreThanHeld ? t.txn.sellExceedsHolding : t.txn.holdingBalance, {
+                      held: formatQty(heldQty),
+                      symbol: form.symbol.trim().toUpperCase(),
+                    })}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="input-label flex items-center gap-1">
@@ -586,6 +636,11 @@ function CashWarningBox({ warning, confirmed, onConfirm }) {
   )
 }
 
+// Fractional shares are real (0.4213 of a VOO), whole lots are the common case.
+function formatQty(n) {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('en-US', { maximumFractionDigits: 6 })
+}
+
 function initialForm(subPortfolios, existingTxn, defaultPortfolioId = null) {
   if (existingTxn) {
     return {
@@ -613,7 +668,9 @@ function initialForm(subPortfolios, existingTxn, defaultPortfolioId = null) {
     ? defaultPortfolioId
     : subPortfolios[0]?.id || ''
   return {
-    date: new Date().toISOString().slice(0, 10),
+    // Local calendar day, not UTC — toISOString() would show yesterday to
+    // anyone adding a transaction between midnight and 03:00 in Turkey.
+    date: todayYmd(),
     type: 'buy',
     assetType: 'bist',
     symbol: '',

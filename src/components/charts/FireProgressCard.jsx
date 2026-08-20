@@ -18,8 +18,12 @@ export function FireProgressCard({
   // New savings props
   savingsSeries,
   monthlyExpensesTRY,
+  // Multiplier implied by the chosen withdrawal rate: 25× at 4%, 33.3× at 3%.
+  // Used only for the caption, but it must track the real target or the card
+  // says "25× rule" above a number computed at some other rate.
+  fireMultiplier = 25,
 }) {
-  const { t } = useT()
+  const { t, ti } = useT()
 
   // Current month is the last entry; previous month is second-to-last
   const currentMonth = savingsSeries?.[savingsSeries.length - 1]
@@ -43,7 +47,7 @@ export function FireProgressCard({
               <span className="display-font text-xl text-accent">FIRE</span>
             </div>
             <p className="text-xs text-text-tertiary mt-1">
-              {t.fire.target} ${targetUSD.toLocaleString()} USD · {formatCurrency(targetTRY, 'TRY', { compact: true, decimals: 2 })}
+              {ti(t.fire.target, { n: formatMultiplier(fireMultiplier) })} ${targetUSD.toLocaleString()} USD · {formatCurrency(targetTRY, 'TRY', { compact: true, decimals: 2 })}
             </p>
           </div>
           <div className="text-right">
@@ -179,4 +183,10 @@ function Driver({ label, value, valueClass = 'text-text-primary' }) {
       <div className={`text-sm font-medium tabular-nums ${valueClass}`}>{value}</div>
     </div>
   )
+}
+
+// 25 rather than 25.0, but 33.3 rather than 33 — a whole-number rate deserves
+// a whole-number caption.
+function formatMultiplier(m) {
+  return Number.isInteger(m) ? String(m) : m.toFixed(1)
 }

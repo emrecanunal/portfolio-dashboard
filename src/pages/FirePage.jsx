@@ -8,7 +8,7 @@ import {
   projectMonthsToFire,
   formatEta,
 } from '../lib/calculations.js'
-import { computeJourneyPosition, FIRE_STAGES } from '../lib/fireStages.js'
+import { computeJourneyPosition } from '../lib/fireStages.js'
 import { formatCurrency, convertFromTRY } from '../lib/currency.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { FireJourneyBar } from '../components/charts/FireJourneyBar.jsx'
@@ -50,8 +50,11 @@ export default function FirePage() {
         currentValueUSD: currentUSD,
         monthlyExpensesUSD: settings.monthlyExpensesUSD,
         activeStageId: settings.activeFireStage,
+        // The withdrawal-rate selector below is not decoration: every stage
+        // target is annualExpenses × scale × (coverage / rate).
+        withdrawalRate: settings.withdrawalRate,
       }),
-    [currentUSD, settings.monthlyExpensesUSD, settings.activeFireStage]
+    [currentUSD, settings.monthlyExpensesUSD, settings.activeFireStage, settings.withdrawalRate]
   )
 
   // ETA per stage (helps users compare)

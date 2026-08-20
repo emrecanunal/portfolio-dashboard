@@ -755,16 +755,9 @@ function PriceCacheTable() {
                   {t.assets[h.assetType]}
                 </div>
               </div>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                className="input-field tabular-nums text-right w-32 py-1 text-xs"
+              <PriceInput
                 value={price}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0
-                  setManualPrice(h.symbol, val, currency)
-                }}
+                onCommit={(val) => setManualPrice(h.symbol, val, currency)}
               />
               <span className="text-2xs text-text-tertiary w-8">{currency}</span>
               {isFromApi && (
@@ -777,6 +770,51 @@ function PriceCacheTable() {
         })}
       </div>
     </div>
+  )
+}
+
+// A manual price field that keeps what you typed until you leave it.
+//
+// Writing straight to the store on every keystroke made "1." impossible to
+// type — parseFloat('1.') is 1, which was written back and re-rendered over the
+// cursor — and hammered localStorage on the way. Local state while editing,
+// one write on blur or Enter.
+function PriceInput({ value, onCommit }) {
+  const [draft, setDraft] = useState(String(value ?? ''))
+  const [editing, setEditing] = useState(false)
+
+  // Adopt refreshed prices from the API, but never yank the field mid-edit.
+  useEffect(() => {
+    if (!editing) setDraft(String(value ?? ''))
+  }, [value, editing])
+
+  const commit = () => {
+    setEditing(false)
+    const parsed = parseFloat(draft)
+    const next = isFinite(parsed) && parsed >= 0 ? parsed : 0
+    setDraft(String(next))
+    if (next !== value) onCommit(next)
+  }
+
+  return (
+    <input
+      type="number"
+      step="any"
+      min="0"
+      className="input-field tabular-nums text-right w-32 py-1 text-xs"
+      value={draft}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') {
+          setDraft(String(value ?? ''))
+          setEditing(false)
+          e.currentTarget.blur()
+        }
+      }}
+    />
   )
 }
 
