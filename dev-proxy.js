@@ -75,7 +75,17 @@ app.get('/api/global', async (req, res) => {
 
 app.get('/api/history', async (req, res) => {
   try {
-    const data = await historyHandle(req.query.type || '', req.query.symbols || '', req.query.months)
+    // from/to must be forwarded. The client walks a long range in windows, and
+    // without them every window collapsed to the default 12 months here while
+    // the deployed function honoured them — local quietly returning less
+    // history than production is the worst kind of difference to debug.
+    const { from, to } = req.query
+    const data = await historyHandle(
+      req.query.type || '',
+      req.query.symbols || '',
+      req.query.months,
+      from && to ? { from, to } : null
+    )
     res.json(data)
   } catch (err) {
     console.error('History error:', err)
