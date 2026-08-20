@@ -922,7 +922,7 @@ function FxRateInput({ ccy, value, onChange, label }) {
         </span>
         <input
           type="number"
-          step="0.01"
+          step="0.0001"
           min="0"
           className="input-field pl-[5.5rem] tabular-nums"
           value={value}

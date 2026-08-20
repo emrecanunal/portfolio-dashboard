@@ -44,8 +44,12 @@ export async function fetchLiveFxRates() {
   return {
     rates: {
       TRY: 1,
-      USD: usdToTry,
-      EUR: eurToTry,
+      USD: round4(usdToTry),
+      // EUR→TRY is a division followed by a multiplication, and binary floats
+      // do not divide cleanly: the raw result rendered as "55.628408959034466"
+      // in the Settings rate field. Four decimals is well past what any FX
+      // quote carries and keeps the field editable by hand.
+      EUR: round4(eurToTry),
     },
     fetchedAt: Date.now(),
     apiDate: data.date, // YYYY-MM-DD from Frankfurter (ECB publish date)
@@ -87,4 +91,10 @@ export function formatRelativeTime(timestamp, lang = 'en') {
   if (minutes < 60) return `${minutes} min ago`
   if (hours < 24) return `${hours}h ago`
   return `${days}d ago`
+}
+
+// FX rates carry at most 4 decimals in practice; anything beyond that is
+// floating-point noise from the USD→TRY→EUR conversion chain.
+function round4(n) {
+  return Math.round(n * 10000) / 10000
 }
