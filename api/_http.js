@@ -100,6 +100,13 @@ const COOKIE_TTL_MS = 60 * 60 * 1000
 let _cookieJar = null
 let _cookieFetchedAt = 0
 
+// Exposed so probe-history.mjs can report whether a jar was actually
+// obtained — "Yahoo is blocking us" and "our warm-up silently returned
+// nothing" look identical from the outside otherwise.
+export function yahooCookieState() {
+  return { hasCookies: Boolean(_cookieJar), length: _cookieJar ? _cookieJar.length : 0 }
+}
+
 export async function warmUpYahooCookies() {
   if (_cookieJar && Date.now() - _cookieFetchedAt < COOKIE_TTL_MS) return _cookieJar
   try {

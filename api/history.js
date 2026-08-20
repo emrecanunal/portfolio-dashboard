@@ -132,11 +132,25 @@ async function globalHistory(symbol, months, window) {
     `?interval=1mo&period1=${Math.floor(start.getTime() / 1000)}` +
     `&period2=${Math.floor(end.getTime() / 1000)}`
 
-  // Yahoo answers 429 to a request that arrives with no cookies. yahooHeaders()
-  // warms a jar first — this is why the first probe run came back RATE_LIMIT.
-  const res = await fetchWithTimeout(url, { headers: await yahooHeaders() }, 9000)
-  if (res.status === 429) throw new Error('YH_RATE_LIMIT')
-  if (!res.ok) throw new Error(`YH_HTTP_${res.status}`)
+  // Yahoo 429s requests that arrive without cookies, so yahooHeaders() warms a
+  // jar first. That alone was not enough in the August 2026 probe, so both
+  // hosts are tried: they are separate front-ends and have historically
+  // rate-limited independently.
+  const headers = await yahooHeaders()
+  let res = null
+  let lastStatus = 0
+  for (const host of ['query1', 'query2']) {
+    const attempt = await fetchWithTimeout(url.replace('query1', host), { headers }, 9000)
+    lastStatus = attempt.status
+    if (attempt.ok) {
+      res = attempt
+      break
+    }
+  }
+  if (!res) {
+    if (lastStatus === 429) throw new Error('YH_RATE_LIMIT')
+    throw new Error(`YH_HTTP_${lastStatus}`)
+  }
 
   const result = (await res.json())?.chart?.result?.[0]
   const stamps = result?.timestamp

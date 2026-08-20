@@ -343,6 +343,8 @@ export const usePortfolioStore = create(
             holdings,
             months,
             onProgress,
+            // Used only as a fallback, if Yahoo refuses a global symbol.
+            finnhubApiKey: state.settings.finnhubApiKey,
           })
 
           set((s) => ({

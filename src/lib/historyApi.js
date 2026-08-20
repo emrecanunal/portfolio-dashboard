@@ -62,11 +62,15 @@ async function fetchWindow(type, symbols, window) {
 
 // Split a span of months into windows.
 //
-// İş Yatırım needed over nine seconds to return twelve months for ONE symbol,
-// which is past Vercel's ceiling — so the range is walked in short windows
-// rather than asked for in one go. TEFAS is the exception: one request already
-// covers up to sixty months, and it rate-limits at about six requests a
-// minute, so chunking it would be strictly worse.
+// Why windows at all: one İş Yatırım request once took over nine seconds,
+// past Vercel's ten-second ceiling. The sweep in probe-history.mjs later
+// showed that was TRANSIENT, not a function of width — 1, 3, 6 and 12 months
+// all return in 0.3–0.5s. So the width below is set from that measurement,
+// and the windowing stays for what it actually buys: a bounded unit of work
+// that a slow moment cannot push past the deadline, and a progress bar with
+// something real to count.
+//
+// Re-run `npm run probe:history` before widening these further.
 export function buildWindows(months, size, now = new Date()) {
   const windows = []
   const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -79,7 +83,11 @@ export function buildWindows(months, size, now = new Date()) {
   return windows
 }
 
-const WINDOW_MONTHS = { bist: 6, global: 24, tefas: 60 }
+const WINDOW_MONTHS = {
+  bist: 12, // measured: 12 months costs the same as 1 (~0.3s)
+  global: 24, // Yahoo returns monthly candles, so width is nearly free
+  tefas: 60, // one request already spans 60 months; it rate-limits at 6/min
+}
 
 // Merge a window's results into the accumulator without losing earlier months.
 function absorb(into, incoming) {
@@ -88,10 +96,48 @@ function absorb(into, incoming) {
   }
 }
 
+// Monthly closes from Finnhub, called straight from the browser.
+//
+// Fallback for when Yahoo refuses — which it did throughout the August 2026
+// probe, cookie warm-up and both hosts notwithstanding. Finnhub is where the
+// live global prices already come from and the key already lives in the
+// browser, so this adds no new secret handling and no new server surface.
+//
+// Finnhub's free tier may answer 403 here: historical candles are a paid
+// feature on some plans. That is reported rather than swallowed, because
+// "no key", "wrong key" and "your plan excludes this" need different fixes.
+export async function fetchFinnhubMonthlyHistory(symbol, months, apiKey) {
+  const to = Math.floor(Date.now() / 1000)
+  const from = to - months * 31 * 24 * 60 * 60
+  const url =
+    `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(symbol)}` +
+    `&resolution=M&from=${from}&to=${to}&token=${encodeURIComponent(apiKey)}`
+
+  const res = await fetch(url, { headers: { Accept: 'application/json' } })
+  if (res.status === 401) throw new Error('FINNHUB_INVALID_KEY')
+  if (res.status === 403) throw new Error('FINNHUB_PLAN_EXCLUDES_HISTORY')
+  if (res.status === 429) throw new Error('FINNHUB_RATE_LIMIT')
+  if (!res.ok) throw new Error(`FINNHUB_HTTP_${res.status}`)
+
+  const data = await res.json()
+  if (data?.s !== 'ok' || !Array.isArray(data.c) || !Array.isArray(data.t)) {
+    throw new Error('FINNHUB_NO_DATA')
+  }
+
+  const out = {}
+  data.t.forEach((stamp, i) => {
+    const close = Number(data.c[i])
+    if (!isFinite(close) || close <= 0) return
+    const d = new Date(stamp * 1000)
+    out[`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`] = close
+  })
+  return out
+}
+
 // Backfill every held symbol, one asset type at a time, walking the range in
 // windows. onProgress(type, done, total) drives the button label — a backfill
 // can take a minute and a silent button looks broken.
-export async function fetchPriceHistory({ holdings, months = 60, onProgress }) {
+export async function fetchPriceHistory({ holdings, months = 60, onProgress, finnhubApiKey }) {
   const byType = { bist: [], tefas: [], global: [] }
   for (const h of holdings) {
     if (byType[h.assetType]) byType[h.assetType].push(h.symbol)
@@ -132,8 +178,28 @@ export async function fetchPriceHistory({ holdings, months = 60, onProgress }) {
       }
     }
 
-    const got = symbols.filter((s) => results[s] && Object.keys(results[s]).length > 0)
-    const missing = symbols.filter((s) => !got.includes(s))
+    let got = symbols.filter((s) => results[s] && Object.keys(results[s]).length > 0)
+    let missing = symbols.filter((s) => !got.includes(s))
+
+    // Second chance for global symbols Yahoo would not serve.
+    if (type === 'global' && missing.length > 0 && finnhubApiKey?.trim()) {
+      for (const symbol of missing) {
+        try {
+          const fromFinnhub = await fetchFinnhubMonthlyHistory(symbol, months, finnhubApiKey)
+          if (Object.keys(fromFinnhub).length > 0) {
+            absorb(results, { [symbol]: fromFinnhub })
+            sourceStats.globalFallback = 'finnhub'
+          }
+        } catch (err) {
+          failure = err.message
+        }
+        // Finnhub's free tier allows about one call a second.
+        await new Promise((r) => setTimeout(r, 1100))
+      }
+      got = symbols.filter((s) => results[s] && Object.keys(results[s]).length > 0)
+      missing = symbols.filter((s) => !got.includes(s))
+    }
+
     sourceStats[type] = {
       ok: got.length,
       failed: missing.length,

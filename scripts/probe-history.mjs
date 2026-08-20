@@ -17,12 +17,16 @@
 //     symbol took over nine seconds — past Vercel's ceiling. The sweep below
 //     finds where the cliff is, so WINDOW_MONTHS in historyApi.js can be set
 //     from evidence rather than guessed.
-//   * Whether Yahoo answers at all. It 429s any request that arrives without
-//     cookies, which is what the first run hit; api/_http.js now warms a jar
-//     first, exactly as the BIST fallback has always done.
+//   * Whether Yahoo answers at all, and if not, WHY — a failed cookie warm-up
+//     and an outright block look identical from the caller's side, so the jar
+//     is reported separately.
+//
+// Set FINNHUB_KEY to also test the global fallback:
+//   FINNHUB_KEY=xxx npm run probe:history
 
 import { historyHandle } from '../api/history.js'
-import { buildWindows } from '../src/lib/historyApi.js'
+import { warmUpYahooCookies, yahooCookieState } from '../api/_http.js'
+import { buildWindows, fetchFinnhubMonthlyHistory } from '../src/lib/historyApi.js'
 
 const args = process.argv.slice(2)
 const monthsIdx = args.indexOf('--months')
@@ -87,12 +91,45 @@ if (firstOk) {
   }
 }
 
+// --- Why is Yahoo refusing? ---------------------------------------------
+// A 429 with no cookies means the warm-up failed; a 429 WITH cookies means
+// Yahoo is blocking this address regardless. Only the second is unfixable
+// from here.
+if (rows.some((r) => r.type === 'global' && !r.ok)) {
+  await warmUpYahooCookies()
+  const jar = yahooCookieState()
+  console.log(
+    `\nYahoo cookie jar: ${
+      jar.hasCookies
+        ? `obtained (${jar.length} chars) — so Yahoo is refusing us even with cookies`
+        : 'EMPTY — the fc.yahoo.com warm-up itself failed, which is the real problem'
+    }`
+  )
+
+  const key = process.env.FINNHUB_KEY
+  if (key) {
+    const started = Date.now()
+    try {
+      const got = await fetchFinnhubMonthlyHistory(DEFAULTS.global, months, key)
+      const keys = Object.keys(got)
+      console.log(
+        `Finnhub fallback: OK — ${keys.length} months ${keys[0]} → ${keys[keys.length - 1]} ` +
+          `(${Date.now() - started}ms)`
+      )
+    } catch (err) {
+      console.log(`Finnhub fallback: FAIL — ${err.message}`)
+    }
+  } else {
+    console.log('Finnhub fallback: not tested (set FINNHUB_KEY to try it)')
+  }
+}
+
 // --- How wide a window will İş Yatırım serve? ---------------------------
 // Each size is timed for ONE symbol. Anything approaching 9s is unusable in
 // production: Vercel kills the function at 10s and several symbols share it.
 if (!symbols.length) {
   console.log('\nİş Yatırım window sweep (one symbol, seconds per window size):')
-  for (const size of [1, 3, 6, 12]) {
+  for (const size of [1, 3, 6, 12, 24, 36]) {
     const [w] = buildWindows(size, size)
     const started = Date.now()
     let note
