@@ -331,25 +331,57 @@ Bu tablo eskir; geri döndüğünde önce doğrula.
 | TEFAS | **tefas.gov.tr** → FonBul | ❓ Doğrulanmalı | Ağustos 2026'da resmî TEFAS API'si birincil kaynak yapıldı; FonBul yedeğe düştü. Aşağıdaki testi bir kez çalıştır. |
 | Döviz kuru | Frankfurter (ECB) | ✅ Çalışıyor | Anahtar gerekmiyor |
 
-### Fon kaynağını doğrulama (bir kez yap)
+### Fon kaynağı: doğrulanan durum
 
 TEFAS 2026'da sitesini yeniledi ve `/api/funds/*` altında JSON API'si açtı.
-`api/tefas.js` artık önce onu deniyor, olmazsa FonBul'a düşüyor. Hangisinin
-nereden çalıştığını iki komut söyler:
+`api/tefas.js` artık önce onu deniyor, olmazsa FonBul'a düşüyor.
+
+**20 Ağustos 2026'da lokalden ölçülen:** her iki kaynak da çalışıyor —
+TEFAS ~55 ms, FonBul ~60 ms. Geriye tek soru kaldı: TEFAS Vercel'den de
+erişilebiliyor mu? Onu şu komut söyler:
 
 ```bash
-npm run probe:funds AFA          # kendi makinenden
-curl -s "https://<vercel-adresin>/api/tefas?symbols=AFA" | head -40
+curl -s "https://<vercel-adresin>/api/tefas?symbols=AFA"
 ```
 
-Yanıttaki `source` alanı `"tefas"` diyorsa iş bitti — fonlar artık Vercel'de de,
-telefonda da güncelleniyor ve lokalden yenileme zorunluluğu kalktı.
-`"fonbul"` diyorsa TEFAS'ın uç noktası yine değişmiş demektir; probe çıktısının
-ham JSON'u neyin bozulduğunu gösterir.
+`source` alanı `"tefas"` diyorsa iş bitti — fonlar artık telefonda da
+güncelleniyor, lokalden yenileme zorunluluğu kalktı. `"fonbul"` diyorsa TEFAS
+da veri merkezi IP'lerini engelliyor demektir; o durumda fonlar yine yalnızca
+senin makinenden yenilenebilir.
+
+Kaynak bozulduğunda tanı için:
+
+```bash
+npm run probe:funds AFA           # iki kaynağı da dener, fiyatları karşılaştırır
+npm run probe:funds AFA -- --raw  # ham JSON'u da basar
+```
+
+Prob, `api/tefas.js`'in gerçek ayrıştırıcısını çağırıyor — "uç nokta yanıt
+veriyor" ile "uygulama doğru fiyatı kaydediyor" aynı şey değil ve önemli olan
+ikincisi. Sonda iki kaynağın fiyatını karşılaştırıp %0,5'ten fazla ayrışma
+varsa uyarıyor.
+
+#### Yanıtın şekli (Ağustos 2026)
+
+```json
+{ "resultList": [
+  { "fonKodu": "AFA", "fonUnvan": "AK PORTFÖY AMERİKA ...",
+    "tarih": "2026-07-20", "fiyat": 1.209905 }, ... ] }
+```
+
+> ⚠️ **Satırlar en eskiden en yeniye sıralı geliyor.** `resultList[0]` bir ay
+> önceki fiyattır — ekranda gayet makul görünen, ama fonun bir ayda ne kadar
+> hareket ettiyse o kadar yanlış bir sayı. `pickLatest()` bu yüzden açıkça
+> tarihe göre sıralıyor ve tarih hiç okunamazsa **son** elemana düşüyor, ilkine
+> değil. `api/tefas.test.js` bunu sabitliyor; o testleri silme.
 
 > **TEFAS dakikada ~6 istek kabul ediyor.** `api/tefas.js` bu yüzden istekleri
 > sırayla ve aralıklı atıyor, sonucu da Vercel edge'inde 30 dakika önbelleğe
 > alıyor. `MAX_SYMBOLS`'ü (şu an 8) yükseltmeden önce bunu düşün.
+
+> **Terminale komut yapıştırırken `#` ile başlayan açıklamaları alma.**
+> `npm install   # açıklama` yazarsan npm açıklamayı paket adı sanar ve
+> `EINVALIDTAGNAME` hatası verir — kurulum hiç çalışmaz.
 
 Kaynaklar sözleşmesiz ve ücretsiz olduğu için kapanmaları normaldir. Biri düşerse
 panik yapma: önce lokal/sunucu ayrımını yap (bkz. bölüm 8), sonra ya yeni kaynak

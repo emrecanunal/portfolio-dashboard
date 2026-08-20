@@ -69,15 +69,8 @@ async function fetchTefasOfficial(fundCode) {
   const rows = body?.resultList
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('TEFAS_NO_DATA')
 
-  const priced = rows
-    .map((r) => ({ raw: r, price: toNumber(r?.fiyat), time: toTime(r?.tarih) }))
-    .filter((r) => r.price > 0)
-    .sort((a, b) => b.time - a.time)
-
-  if (priced.length === 0) throw new Error('TEFAS_NO_PRICE')
-
-  const latest = priced[0]
-  const previous = priced[1]
+  const { latest, previous } = pickLatest(rows)
+  if (!latest) throw new Error('TEFAS_NO_PRICE')
   const name = latest.raw?.fonUnvan
 
   return {
@@ -95,15 +88,51 @@ async function fetchTefasOfficial(fundCode) {
   }
 }
 
-// `tarih` has appeared both as epoch milliseconds and as a 'DD.MM.YYYY' string
-// across TEFAS revisions. It is only used for ordering, so accept either shape
-// and fall back to 0 rather than throwing.
+// Pick the newest priced row, and the one before it.
+//
+// THIS IS THE DANGEROUS PART. The endpoint returns a month of daily rows
+// OLDEST FIRST, so anything that grabs resultList[0] silently reports a price
+// from four weeks ago — a number that looks perfectly reasonable on screen and
+// is wrong by however much the fund moved in a month. Hence: sort explicitly,
+// and when the dates can't be read at all, fall back to the documented order
+// (last element) rather than to index 0.
+//
+// Exported for the tests in tefas.test.js.
+export function pickLatest(rows) {
+  const priced = rows
+    .map((raw) => ({ raw, price: toNumber(raw?.fiyat), time: toTime(raw?.tarih) }))
+    .filter((r) => r.price > 0)
+
+  if (priced.length === 0) return { latest: null, previous: null }
+
+  // If not one row carried a parseable date, sorting would be meaningless and
+  // a stable sort would hand back the OLDEST row. Trust the documented
+  // oldest-first ordering instead.
+  if (priced.every((r) => r.time === 0)) {
+    return {
+      latest: priced[priced.length - 1],
+      previous: priced[priced.length - 2] || null,
+    }
+  }
+
+  const sorted = [...priced].sort((a, b) => b.time - a.time)
+  return { latest: sorted[0], previous: sorted[1] || null }
+}
+
+// `tarih` currently arrives as 'YYYY-MM-DD', but has appeared as epoch
+// milliseconds and as a day-first string across TEFAS revisions. It is only
+// used for ordering, so accept every shape we've seen and return 0 — "unknown"
+// — rather than throwing, so one odd row can't take down the whole fetch.
 function toTime(value) {
   if (typeof value === 'number' && isFinite(value)) return value
   if (typeof value !== 'string') return 0
   const trimmed = value.trim()
-  const dotted = trimmed.match(/^(\d{2})[.\/](\d{2})[.\/](\d{4})$/)
-  if (dotted) return new Date(`${dotted[3]}-${dotted[2]}-${dotted[1]}T00:00:00Z`).getTime()
+  // Day-first: 20.07.2026, 20/07/2026, 20-07-2026
+  const dayFirst = trimmed.match(/^(\d{2})[.\/-](\d{2})[.\/-](\d{4})$/)
+  if (dayFirst) {
+    return Date.parse(`${dayFirst[3]}-${dayFirst[2]}-${dayFirst[1]}T00:00:00Z`) || 0
+  }
+  // Year-first: 2026-07-20 (the current format) and full ISO timestamps
   const parsed = Date.parse(trimmed)
   return isFinite(parsed) ? parsed : 0
 }
