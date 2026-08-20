@@ -168,9 +168,10 @@ if (rows.some((r) => r.type === 'global' && !r.ok)) {
   if (key && !keyInfo.usable) {
     console.log(
       `Finnhub fallback: NOT A KEY — got "${keyInfo.shown}".\n` +
-        '  That is the placeholder from the instructions, not your token.\n' +
-        '  Fix it with:  npm run probe:funds --help  … or simply rewrite the file:\n' +
-        '    printf \'FINNHUB_KEY=%s\\n\' "$(pbpaste)" > .env.local'
+        '  That is not a Finnhub token — most likely the clipboard held\n' +
+        '  something else, such as the command you just copied to run this.\n' +
+        '  Open .env.local in an editor and put the key from the app\'s\n' +
+        '  Settings on the FINNHUB_KEY= line. One line, no quotes.'
     )
   } else if (keyInfo.usable) {
     console.log(`Finnhub key in use: ${keyInfo.fingerprint}`)
