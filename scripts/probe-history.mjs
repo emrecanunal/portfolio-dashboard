@@ -21,12 +21,37 @@
 //     and an outright block look identical from the caller's side, so the jar
 //     is reported separately.
 //
-// Set FINNHUB_KEY to also test the global fallback:
-//   FINNHUB_KEY=xxx npm run probe:history
+// To also test the global fallback, the probe needs a Finnhub key. Easiest is
+// to put it in .env.local once and forget about it:
+//
+//   echo "FINNHUB_KEY=your-key-here" >> .env.local
+//
+// .gitignore already covers .env.local, so it cannot reach GitHub. Otherwise
+// pass it for a single run, from the clipboard so it never gets typed or
+// stored in shell history:
+//
+//   FINNHUB_KEY=$(pbpaste) npm run probe:history
 
 import { historyHandle } from '../api/history.js'
 import { warmUpYahooCookies, yahooCookieState, yahooCrumb } from '../api/_http.js'
 import { buildWindows, fetchFinnhubMonthlyHistory } from '../src/lib/historyApi.js'
+import { readFileSync } from 'node:fs'
+
+// Read KEY=value lines from .env.local, if it exists. Environment variables
+// still win, so a one-off run can override the stored key.
+function loadEnvLocal() {
+  try {
+    for (const line of readFileSync(new URL('../.env.local', import.meta.url), 'utf8').split('\n')) {
+      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
+      if (!match) continue
+      const value = match[2].replace(/^['"]|['"]$/g, '').trim()
+      if (value && !process.env[match[1]]) process.env[match[1]] = value
+    }
+  } catch {
+    // No .env.local is the normal case, not an error.
+  }
+}
+loadEnvLocal()
 
 const args = process.argv.slice(2)
 const monthsIdx = args.indexOf('--months')
@@ -130,7 +155,11 @@ if (rows.some((r) => r.type === 'global' && !r.ok)) {
       console.log(`Finnhub fallback: FAIL — ${err.message}`)
     }
   } else {
-    console.log('Finnhub fallback: not tested (set FINNHUB_KEY to try it)')
+    console.log(
+      'Finnhub fallback: not tested.\n' +
+        '  Store the key once:  echo "FINNHUB_KEY=your-key" >> .env.local\n' +
+        '  Or just this run:    FINNHUB_KEY=$(pbpaste) npm run probe:history'
+    )
   }
 }
 
