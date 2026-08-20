@@ -21,14 +21,17 @@
 //     and an outright block look identical from the caller's side, so the jar
 //     is reported separately.
 //
-// To also test the global fallback, the probe needs a Finnhub key. Easiest is
-// to put it in .env.local once and forget about it:
+// To also test the global fallback, the probe needs a Finnhub key. Copy it
+// from the app's Settings, then store it once — reading from the clipboard so
+// there is no placeholder to paste literally and no key in shell history:
 //
-//   echo "FINNHUB_KEY=your-key-here" >> .env.local
+//   printf 'FINNHUB_KEY=%s\n' "$(pbpaste)" > .env.local
 //
-// .gitignore already covers .env.local, so it cannot reach GitHub. Otherwise
-// pass it for a single run, from the clipboard so it never gets typed or
-// stored in shell history:
+// Note `>` rather than `>>`: rewriting the file avoids stacking duplicate
+// FINNHUB_KEY lines, where the first silently wins. .gitignore already covers
+// .env.local, so it cannot reach GitHub.
+//
+// For a single run without storing anything:
 //
 //   FINNHUB_KEY=$(pbpaste) npm run probe:history
 
@@ -37,11 +40,12 @@ import { warmUpYahooCookies, yahooCookieState, yahooCrumb } from '../api/_http.j
 import { buildWindows, fetchFinnhubMonthlyHistory } from '../src/lib/historyApi.js'
 import { readFileSync } from 'node:fs'
 
-// Read KEY=value lines from .env.local, if it exists. Environment variables
-// still win, so a one-off run can override the stored key.
+// Read KEY=value lines from .env.local, if it exists. A real environment
+// variable still wins, so a one-off run can override the stored key.
 function loadEnvLocal() {
   try {
-    for (const line of readFileSync(new URL('../.env.local', import.meta.url), 'utf8').split('\n')) {
+    const text = readFileSync(new URL('../.env.local', import.meta.url), 'utf8')
+    for (const line of text.split('\n')) {
       const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
       if (!match) continue
       const value = match[2].replace(/^['"]|['"]$/g, '').trim()
@@ -52,6 +56,23 @@ function loadEnvLocal() {
   }
 }
 loadEnvLocal()
+
+// A key that never left the example is not an invalid key, and reporting it as
+// one sends you off to regenerate a perfectly good token. Finnhub keys are long
+// ASCII alphanumeric strings; anything else got here by copy-pasting the
+// instructions rather than the dashboard.
+function describeKey(key) {
+  if (!key) return { usable: false, why: 'none' }
+  const trimmed = key.trim()
+  if (!/^[A-Za-z0-9_]{15,}$/.test(trimmed)) {
+    return { usable: false, why: 'placeholder', shown: trimmed.slice(0, 24) }
+  }
+  return {
+    usable: true,
+    // Enough to check against the app's Settings field, not enough to use.
+    fingerprint: `${trimmed.slice(0, 4)}…${trimmed.slice(-4)} (${trimmed.length} chars)`,
+  }
+}
 
 const args = process.argv.slice(2)
 const monthsIdx = args.indexOf('--months')
@@ -142,7 +163,17 @@ if (rows.some((r) => r.type === 'global' && !r.ok)) {
   }
 
   const key = process.env.FINNHUB_KEY
-  if (key) {
+  const keyInfo = describeKey(key)
+
+  if (key && !keyInfo.usable) {
+    console.log(
+      `Finnhub fallback: NOT A KEY — got "${keyInfo.shown}".\n` +
+        '  That is the placeholder from the instructions, not your token.\n' +
+        '  Fix it with:  npm run probe:funds --help  … or simply rewrite the file:\n' +
+        '    printf \'FINNHUB_KEY=%s\\n\' "$(pbpaste)" > .env.local'
+    )
+  } else if (keyInfo.usable) {
+    console.log(`Finnhub key in use: ${keyInfo.fingerprint}`)
     const started = Date.now()
     try {
       const got = await fetchFinnhubMonthlyHistory(DEFAULTS.global, months, key)
@@ -153,6 +184,13 @@ if (rows.some((r) => r.type === 'global' && !r.ok)) {
       )
     } catch (err) {
       console.log(`Finnhub fallback: FAIL — ${err.message}`)
+      if (err.message === 'FINNHUB_INVALID_KEY') {
+        console.log(
+          '  Finnhub rejected this token. If you regenerated the key recently,\n' +
+            "  the app's Settings field still holds the revoked one — live global\n" +
+            '  prices will be failing too. Update both.'
+        )
+      }
     }
   } else {
     console.log(
