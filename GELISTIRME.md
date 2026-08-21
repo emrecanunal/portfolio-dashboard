@@ -285,8 +285,21 @@ Uygulamada **Ayarlar → Dışa aktar & yedekle → Yedek indir (JSON)**. Dosya
 `portfolio-backup-TARIH.json` adıyla iner; bu isim `.gitignore` kalıbına uyar,
 yani güvenli.
 
-Geri yüklemek: aynı bölümde **Yedekten geri yükle** → dosyayı seç. (Uyarı da diyor:
-bu işlem mevcut verinin **tamamını** değiştirir.)
+Geri yüklemek: aynı bölümde **Yedekten geri yükle** → dosyayı seç.
+
+**Geri yükleme neyi geri getirir, neyi getirmez** (Ağustos 2026'da sıkılaştırıldı):
+
+- Her işlem tek tek doğrulanır. Bozuk satırlar hangi alanların sorunlu olduğuyla
+  birlikte onay ekranında listelenir, sağlamlar alınır. Hiçbir satır sağ kalmazsa
+  dosya tümden reddedilir — boş geri yükleme yapılmaz.
+- **Döviz kurları, fiyat zaman damgaları ve API anahtarı dosyadan alınmaz.** Yedek
+  bir portföyü kaydeder, ama aynı zamanda kaydedildiği *anı* da taşır. Mayıs'taki
+  34,5'lik USD kurunun bugünkü 47,9'un üzerine yazılması, uygulamadaki çevrilmiş
+  her rakamı %30 saptırırdı — hata vermeden, hiçbir etiket değişmeden. Bu yüzden
+  geri gelen ayarlar bir **izin listesi**: `RESTORABLE_SETTINGS`, `dataExport.js`.
+  Yeni bir ayar alanı eklersen, geri gelmesini istiyorsan o listeye de ekle.
+- Geri yüklemeden **önce mevcut verinin yedeği otomatik indirilir**. Geri
+  dönebilmek, önceden akıl etmiş olmana bağlı değil.
 
 İşlem geçmişini Excel'de incelemek istersen **İşlemleri dışa aktar (CSV)**.
 
@@ -321,72 +334,62 @@ kaynaklar ve zamanla sessizce bozulabilirler. "Bazı semboller başarısız" uya
 `git status` çıktısında `M` işaretli dosyalar varsa, o senin yarım bıraktığın iştir.
 `git diff` ile ne yaptığını hatırlarsın.
 
-### Veri kaynaklarının durumu — Ağustos 2026
+### Veri kaynaklarının durumu — 21 Ağustos 2026
 
-Bu tablo eskir; geri döndüğünde önce doğrula.
+Aşağıdakilerin hepsi ölçüldü, tahmin edilmedi. Yine de eskir; geri döndüğünde
+`npm run probe:history` çalıştır, tek komutta dördünü birden dener.
 
-| Varlık | Kaynak | Durum | Not |
+| Varlık | Canlı fiyat | Geçmiş fiyat | Anahtar |
 |---|---|---|---|
-| BIST | İş Yatırım | ✅ Çalışıyor | Hem lokalde hem Vercel'de |
-| Global | ~~Stooq~~ → **Finnhub** | ⚠️ Anahtar gerekli | Stooq Mart 2026'da ücretsiz CSV'yi kapattı. Finnhub anahtarı **Ayarlar**'dan girilir, yedek JSON'a yazılmaz — ayrıca sakla. |
-| TEFAS | **tefas.gov.tr** → FonBul | ❓ Doğrulanmalı | Ağustos 2026'da resmî TEFAS API'si birincil kaynak yapıldı; FonBul yedeğe düştü. Aşağıdaki testi bir kez çalıştır. |
-| Döviz kuru | Frankfurter (ECB) | ✅ Çalışıyor | Anahtar gerekmiyor |
+| BIST | İş Yatırım ✅ | İş Yatırım ✅ | yok |
+| TEFAS | tefas.gov.tr ✅ | tefas.gov.tr ✅ | yok |
+| Global | Finnhub ✅ | **Alpha Vantage** ✅ | ikisi de gerekli |
+| Döviz kuru | Frankfurter ✅ | Frankfurter ✅ | yok |
 
-### Fon kaynağı: doğrulanan durum
+**Fon meselesi çözüldü.** FonBul veri merkezi IP'lerini engellediği için fonlar
+uzun süre yalnızca lokalden yenilenebiliyordu (commit `21309b2` / `e74258c`).
+TEFAS'ın resmî API'sine geçince o kısıt kalktı: fonlar artık Vercel'de de,
+telefonda da güncelleniyor. FonBul yedek olarak duruyor.
 
-TEFAS 2026'da sitesini yeniledi ve `/api/funds/*` altında JSON API'si açtı.
-`api/tefas.js` artık önce onu deniyor, olmazsa FonBul'a düşüyor.
+**Kapanan kaynaklar — tekrar denemeye değmez:**
 
-**20 Ağustos 2026'da lokalden ölçülen:** her iki kaynak da çalışıyor —
-TEFAS ~55 ms, FonBul ~60 ms. Geriye tek soru kaldı: TEFAS Vercel'den de
-erişilebiliyor mu? Onu şu komut söyler:
+| Kaynak | Ne oldu | Kanıt |
+|---|---|---|
+| Stooq | Mart 2026'da ücretsiz CSV kapandı | `api/global.js` artık ona gitmiyor |
+| Yahoo Finance | Çerez veriyor, **crumb vermiyor** → 429 | `npm run probe:history` iki satırı ayrı raporlar |
+| Finnhub geçmiş mumu | Ücretsiz plan kapsamıyor → **403** | 401 olsaydı anahtar sorunu olurdu; 403 plan sorunu |
+
+Bu üçü için ayrı ayrı zaman harcandı. Yahoo'da çerez ısıtma ve iki host denendi,
+Finnhub'da anahtarın yarıları tek tek test edildi. Sonuç değişmedi.
+
+### Anahtarlar nerede duruyor
+
+| Anahtar | Nerede | Neden orada |
+|---|---|---|
+| Finnhub | Ayarlar → tarayıcı localStorage | Tarayıcıdan doğrudan çağrılıyor |
+| Alpha Vantage | `.env.local` + Vercel ortam değişkeni | **Sunucu tarafında okunuyor** — tarayıcıya inmiyor, yedeğe girmiyor |
+
+`.env.local` git'e girmez (`.gitignore:5`). Vercel'de `ALPHAVANTAGE_KEY`
+tanımlı değilse canlıda geçmiş dolumu `AV_NO_KEY` döner.
+
+Anahtarı düzenleyeceksen dosyayı **editörde aç**. Terminalden `pbpaste` ile
+yazmak, komutu kopyalamanın panoyu bozması yüzünden iki kez ters gitti.
+
+### Bir sembol fiyatlanmıyorsa
 
 ```bash
-curl -s "https://<vercel-adresin>/api/tefas?symbols=AFA"
+npm run probe:symbols bist SKBNK INVES PAHOL
 ```
 
-`source` alanı `"tefas"` diyorsa iş bitti — fonlar artık telefonda da
-güncelleniyor, lokalden yenileme zorunluluğu kalktı. `"fonbul"` diyorsa TEFAS
-da veri merkezi IP'lerini engelliyor demektir; o durumda fonlar yine yalnızca
-senin makinenden yenilenebilir.
+Sunucu gerektirmez — handler'ı doğrudan çağırır. `npm run dev:full` terminali
+işgal ettiği için curl ile proxy'yi sorgulamak, sorguladığın sunucuyu
+durdurmayı gerektiriyor; bu tuzağa iki kez düşüldü.
 
-Kaynak bozulduğunda tanı için:
-
-```bash
-npm run probe:funds AFA           # iki kaynağı da dener, fiyatları karşılaştırır
-npm run probe:funds AFA -- --raw  # ham JSON'u da basar
-```
-
-Prob, `api/tefas.js`'in gerçek ayrıştırıcısını çağırıyor — "uç nokta yanıt
-veriyor" ile "uygulama doğru fiyatı kaydediyor" aynı şey değil ve önemli olan
-ikincisi. Sonda iki kaynağın fiyatını karşılaştırıp %0,5'ten fazla ayrışma
-varsa uyarıyor.
-
-#### Yanıtın şekli (Ağustos 2026)
-
-```json
-{ "resultList": [
-  { "fonKodu": "AFA", "fonUnvan": "AK PORTFÖY AMERİKA ...",
-    "tarih": "2026-07-20", "fiyat": 1.209905 }, ... ] }
-```
-
-> ⚠️ **Satırlar en eskiden en yeniye sıralı geliyor.** `resultList[0]` bir ay
-> önceki fiyattır — ekranda gayet makul görünen, ama fonun bir ayda ne kadar
-> hareket ettiyse o kadar yanlış bir sayı. `pickLatest()` bu yüzden açıkça
-> tarihe göre sıralıyor ve tarih hiç okunamazsa **son** elemana düşüyor, ilkine
-> değil. `api/tefas.test.js` bunu sabitliyor; o testleri silme.
-
-> **TEFAS dakikada ~6 istek kabul ediyor.** `api/tefas.js` bu yüzden istekleri
-> sırayla ve aralıklı atıyor, sonucu da Vercel edge'inde 30 dakika önbelleğe
-> alıyor. `MAX_SYMBOLS`'ü (şu an 8) yükseltmeden önce bunu düşün.
-
-> **Terminale komut yapıştırırken `#` ile başlayan açıklamaları alma.**
-> `npm install   # açıklama` yazarsan npm açıklamayı paket adı sanar ve
-> `EINVALIDTAGNAME` hatası verir — kurulum hiç çalışmaz.
-
-Kaynaklar sözleşmesiz ve ücretsiz olduğu için kapanmaları normaldir. Biri düşerse
-panik yapma: önce lokal/sunucu ayrımını yap (bkz. bölüm 8), sonra ya yeni kaynak
-bul ya da o varlık türünü manuel fiyatla (**Ayarlar → Fiyat önbelleği**).
+**İş Yatırım yavaş değil, kararsız.** Aynı sembol aynı dakika içinde 0,1
+saniyede de cevap verdi, 8 saniyede de takıldı. 5 sembol sorulduğunda hepsi
+döndü, 32 sorulduğunda beşi düştü — yani arıza sembollere değil, sorulan
+hacme bağlı. Bu yüzden hem canlı fiyatta hem geçmişte yeniden deneme var.
+Bir sembolün "başarısız" görünmesi çoğu zaman o sembolle ilgili değildir.
 
 ---
 
@@ -427,11 +430,13 @@ Arşiv iki yoldan doluyor:
 |---|---|---|
 | TEFAS | `fonFiyatBilgiGetir`, `periyod` 1/3/6/12/36/60 | ✅ Canlı fiyatla aynı uç |
 | BIST | İş Yatırım `HisseTekil`, geniş tarih aralığı | ✅ Canlı fiyatla aynı uç |
-| Global | Yahoo `chart?interval=1mo` | ❓ **Yeni bağımlılık, doğrula** |
+| Global | **Alpha Vantage** `TIME_SERIES_MONTHLY_ADJUSTED` | ✅ Tek istekte 20+ yıl |
 | Döviz | Frankfurter `/v1/A..B` | ✅ Ağustos 2026'da test edildi, tek istekle 169 gün |
 
-Global için Yahoo yeni: Finnhub'ın ücretsiz katmanı geçmiş mum verisi vermiyor,
-Stooq da Mart 2026'da kapandı. Doğrulamak için:
+Global için Alpha Vantage: Yahoo, Stooq ve Finnhub'ın üçü de kapandı (yukarıdaki
+tabloya bak). Tek istekte sembolün tüm geçmişini döndürüyor — AAPL için 321 ay,
+1999'a kadar. **Günde 25 istek** veriyor, o yüzden global semboller istek başına
+bir tane ve aralıklı soruluyor; döngüye sokma. Doğrulamak için:
 
 ```bash
 npm run probe:history
@@ -545,8 +550,10 @@ ikisinde de çalışmıyorsa kaynağın kendisi değişmiş/kapanmıştır.
 
 ```bash
 npm run dev:full     # geliştirme (Vite 5173 + api proxy 3001)
-npm run probe:funds  # fon fiyat kaynakları çalışıyor mu
-npm run probe:history # geçmiş fiyat kaynakları çalışıyor mu
+npm test             # para matematiği + tarih mantığı — göndermeden önce
+npm run probe:history   # dört kaynağı da dener, anahtarları da test eder
+npm run probe:symbols bist THYAO   # tek sembol neden fiyatlanmıyor (sunucusuz)
+npm run probe:funds     # yalnız fon kaynakları
 npm run build      # production derleme — göndermeden önce çalıştır
 npm run preview    # derlenmiş sürümü lokalde dene
 
