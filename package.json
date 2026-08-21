@@ -14,6 +14,7 @@
     "test:tz": "TZ=Pacific/Auckland vitest run && TZ=America/Los_Angeles vitest run",
     "probe:funds": "node scripts/probe-fund-sources.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "probe:symbols": "node scripts/probe-symbols.mjs",
     "probe:history": "node scripts/probe-history.mjs"
   },
   "dependencies": {
