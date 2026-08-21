@@ -242,18 +242,26 @@ export function cashRunway(transactions) {
   let min = Infinity
   let minDate = null
   let firstNegative = null
-  const negativeDays = new Set()
+  const negativeDays = []
 
-  for (const tx of sorted) {
+  // Settled at the END of each day, not after each fill. Within one day the
+  // order of two trades is an artefact of how the export was sorted, not of
+  // what happened, so an intraday dip between a buy and the sell that funded it
+  // is noise. A day that CLOSES short is the real thing.
+  for (let i = 0; i < sorted.length; i++) {
+    const tx = sorted[i]
     const gross = tx.quantity * tx.price
     if (tx.type === 'deposit') cash += gross
     else if (tx.type === 'withdraw') cash -= gross
     else if (tx.type === 'buy') cash -= gross + (tx.fee || 0)
     else if (tx.type === 'sell') cash += gross - (tx.fee || 0)
 
+    const dayEnds = i === sorted.length - 1 || sorted[i + 1].date !== tx.date
+    if (!dayEnds) continue
+
     if (cash < 0) {
-      negativeDays.add(tx.date)
-      if (!firstNegative) firstNegative = { date: tx.date, symbol: tx.symbol, cash }
+      negativeDays.push(tx.date)
+      if (!firstNegative) firstNegative = { date: tx.date, cash }
     }
     if (cash < min) {
       min = cash
@@ -261,7 +269,14 @@ export function cashRunway(transactions) {
     }
   }
 
-  return { closing: cash, min, minDate, firstNegative, negativeDays: negativeDays.size }
+  return {
+    closing: cash,
+    min,
+    minDate,
+    firstNegative,
+    lastNegative: negativeDays[negativeDays.length - 1] || null,
+    negativeDays: negativeDays.length,
+  }
 }
 
 // --- transactions -----------------------------------------------------------
@@ -449,8 +464,8 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
   console.log(`\nCash: closing ${fmtTRY(runway.closing)}, low ${fmtTRY(runway.min)} on ${runway.minDate}`)
   if (runway.firstNegative) {
     console.log(
-      `\n  WARNING: cash goes negative on ${runway.negativeDays} day(s), first on ` +
-        `${runway.firstNegative.date} (${runway.firstNegative.symbol}), worst ` +
+      `\n  WARNING: ${runway.negativeDays} day(s) close with negative cash, from ` +
+        `${runway.firstNegative.date} to ${runway.lastNegative}, worst ` +
         `${fmtTRY(runway.min)} on ${runway.minDate}.\n` +
         '  The trades are real, so the shortfall means funding is missing or dated\n' +
         '  later than it arrived. Written anyway — this is a question for the person\n' +
