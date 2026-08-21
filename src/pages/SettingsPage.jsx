@@ -27,6 +27,12 @@ export default function SettingsPage() {
   const deleteSubPortfolio = usePortfolioStore((s) => s.deleteSubPortfolio)
   const resetToDefaults = usePortfolioStore((s) => s.resetToDefaults)
   const clearAllTransactions = usePortfolioStore((s) => s.clearAllTransactions)
+  // Needed by the safety backup below, which writes the WHOLE state, not just
+  // the transactions: a restore that came back without the month-end archives
+  // would silently drop months that cost API calls against a 25-a-day quota.
+  const priceCache = usePortfolioStore((s) => s.priceCache)
+  const priceHistory = usePortfolioStore((s) => s.priceHistory)
+  const fxHistory = usePortfolioStore((s) => s.fxHistory)
 
   // FX rates: keep local mirror so user can type without instant write
   const [fxLocal, setFxLocal] = useState({
@@ -95,10 +101,28 @@ export default function SettingsPage() {
     setRenameTarget(null)
   }
 
+  // Every irreversible action downloads the current state before running.
+  //
+  // Restore already did this; the buttons that throw data away did not, which
+  // is backwards — restore at least replaces one dataset with another the user
+  // chose, while "reset to demo data" replaces a real portfolio with sample
+  // transactions and nothing on this machine remembers what was there. The
+  // data lives in this browser's localStorage and nowhere else: there is no
+  // server copy, no other device, no undo.
+  const downloadSafetyBackup = () =>
+    exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
+
+  const backupThen = (action) => () => {
+    downloadSafetyBackup()
+    action()
+  }
+
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState(null)
   const handleDelete = () => {
     if (!deleteTarget) return
+    // An empty portfolio is a name; one with transactions in it is data.
+    if ((txnsByPortfolio.get(deleteTarget.id) || 0) > 0) downloadSafetyBackup()
     deleteSubPortfolio(deleteTarget.id)
     // Also remove transactions in that portfolio
     const portfolioId = deleteTarget.id
@@ -109,6 +133,7 @@ export default function SettingsPage() {
   // Data management confirm dialogs
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
+
 
   return (
     <div className="space-y-6">
@@ -399,9 +424,12 @@ export default function SettingsPage() {
       <ConfirmDialog
         open={resetConfirmOpen}
         onClose={() => setResetConfirmOpen(false)}
-        onConfirm={resetToDefaults}
+        onConfirm={backupThen(resetToDefaults)}
         title={t.settingsPage.resetDemo}
-        message={t.settingsPage.resetDemoConfirm}
+        message={ti(t.settingsPage.resetDemoConfirm, {
+          n: transactions.length,
+          p: subPortfolios.length,
+        })}
         confirmLabel={t.common.confirm}
         cancelLabel={t.common.cancel}
         variant="danger"
@@ -411,9 +439,9 @@ export default function SettingsPage() {
       <ConfirmDialog
         open={clearConfirmOpen}
         onClose={() => setClearConfirmOpen(false)}
-        onConfirm={clearAllTransactions}
+        onConfirm={backupThen(clearAllTransactions)}
         title={t.settingsPage.clearAll}
-        message={t.settingsPage.clearAllConfirm}
+        message={ti(t.settingsPage.clearAllConfirm, { n: transactions.length })}
         confirmLabel={t.common.confirm}
         cancelLabel={t.common.cancel}
         variant="danger"
