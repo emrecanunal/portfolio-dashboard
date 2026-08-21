@@ -111,15 +111,42 @@ async function fetchYahoo(symbol) {
 }
 
 // Try İş Yatırım first; on failure, fall back to Yahoo
+// Ask İş Yatırım, and ask it twice before giving up on it.
+//
+// It hangs unpredictably rather than being slow — measured on 21 Aug 2026, the
+// same symbol answered in 0.1s and timed out in the same minute. Asking for
+// five symbols directly priced all five in 689ms, while the app asking for
+// thirty-two lost five of them, so the failures track volume, not the symbols.
+//
+// The retry comes BEFORE the Yahoo fallback deliberately. Yahoo has refused us
+// since August 2026 — cookies are issued, the crumb is not — so falling back to
+// it turns a transient hiccup into a lost price. A second ask of a working
+// source beats a first ask of a broken one.
 async function fetchOne(symbol) {
-  try {
-    return await fetchIsYatirim(symbol)
-  } catch (errIS) {
+  const attemptIsYatirim = async () => {
     try {
-      return await fetchYahoo(symbol)
-    } catch (errYH) {
-      throw new Error(`IS:${errIS.message} | YH:${errYH.message}`)
+      return { ok: true, value: await fetchIsYatirim(symbol) }
+    } catch (err) {
+      return { ok: false, err }
     }
+  }
+
+  let first = await attemptIsYatirim()
+  if (first.ok) return first.value
+
+  // A symbol İş Yatırım genuinely does not carry will not appear on a second
+  // ask either; only retry the failures that look transient.
+  if (!/IS_NO_DATA|IS_NO_PRICE|IS_HTTP_4/.test(first.err.message)) {
+    await new Promise((r) => setTimeout(r, 250))
+    const second = await attemptIsYatirim()
+    if (second.ok) return second.value
+    first = second
+  }
+
+  try {
+    return await fetchYahoo(symbol)
+  } catch (errYH) {
+    throw new Error(`IS:${first.err.message} | YH:${errYH.message}`)
   }
 }
 
@@ -138,6 +165,10 @@ async function handle(symbolsParam) {
   const BATCH = 6
   for (let i = 0; i < symbols.length; i += BATCH) {
     const batch = symbols.slice(i, i + BATCH)
+    // A short breath between rounds. Six at a time is demonstrably fine; it is
+    // thirty-two in a row that İş Yatırım starts dropping, so the problem is
+    // sustained volume rather than concurrency, and pacing is what helps.
+    if (i > 0) await new Promise((r) => setTimeout(r, 150))
     const settled = await Promise.allSettled(batch.map(fetchOne))
     settled.forEach((s, idx) => {
       const sym = batch[idx]
