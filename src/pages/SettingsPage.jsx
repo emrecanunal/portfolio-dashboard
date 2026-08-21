@@ -676,10 +676,20 @@ function AutoRefreshControl() {
   const enabled = usePortfolioStore((s) => s.settings.autoRefreshEnabled)
   const minutes = usePortfolioStore((s) => s.settings.autoRefreshMinutes) ?? 5
   const sourceFetchedAt = usePortfolioStore((s) => s.settings.priceMeta?.sourceFetchedAt)
+  const sourceStats = usePortfolioStore((s) => s.settings.priceMeta?.sourceStats)
   const updateSettings = usePortfolioStore((s) => s.updateSettings)
 
   const SOURCE_LABELS = { bist: 'BIST', tefas: 'TEFAS', global: 'Global' }
   const stamps = Object.entries(SOURCE_LABELS).filter(([key]) => sourceFetchedAt?.[key])
+
+  // The timestamp records an ATTEMPT, because the scheduler needs it either way
+  // — without it a dead source would be retried in a tight loop. But "Global:
+  // 1 min ago" next to "0 updated, 5 failed" reads as success, so a failed
+  // attempt has to say so here rather than borrowing the look of a good one.
+  const attemptFailed = (key) => {
+    const stat = sourceStats?.[key]
+    return Boolean(stat) && (stat.ok || 0) === 0 && ((stat.failed || 0) > 0 || stat.error)
+  }
 
   return (
     <div className="rounded-lg border border-border-subtle p-3 space-y-3">
@@ -742,8 +752,9 @@ function AutoRefreshControl() {
               {stamps.map(([key, label]) => (
                 <span key={key} className="text-2xs text-text-tertiary">
                   {label}:{' '}
-                  <span className="text-text-secondary">
+                  <span className={attemptFailed(key) ? 'text-warning' : 'text-text-secondary'}>
                     {formatRelativeTime(sourceFetchedAt[key], lang)}
+                    {attemptFailed(key) && ` · ${t.settingsPage.lastAttemptFailed}`}
                   </span>
                 </span>
               ))}
