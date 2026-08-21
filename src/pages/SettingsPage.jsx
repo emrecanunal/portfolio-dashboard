@@ -829,6 +829,19 @@ function PriceHistoryPanel() {
     [priceHistory, fxHistory, heldSymbols]
   )
 
+  // Group the stored failures by message: five symbols throttled by the same
+  // source is one fact, not five.
+  const failureReasons = useMemo(() => {
+    const byReason = new Map()
+    for (const entry of historyMeta.errors || []) {
+      if (!entry?.error) continue
+      const list = byReason.get(entry.error) || []
+      list.push(entry.symbol)
+      byReason.set(entry.error, list)
+    }
+    return [...byReason.entries()].map(([reason, syms]) => `${reason} (${syms.join(', ')})`)
+  }, [historyMeta.errors])
+
   const run = async () => {
     setRunning(true)
     setProgress(null)
@@ -884,9 +897,20 @@ function PriceHistoryPanel() {
       )}
 
       {coverage.missing.length > 0 && (
-        <p className="text-2xs text-warning leading-relaxed">
-          {ti(t.settingsPage.historyMissing, { symbols: coverage.missing.join(', ') })}
-        </p>
+        <>
+          <p className="text-2xs text-warning leading-relaxed">
+            {ti(t.settingsPage.historyMissing, { symbols: coverage.missing.join(', ') })}
+          </p>
+          {/* The reason matters more than the list. A rate limit means wait and
+              retry; a bad symbol means fix the ticker; a dead source means find
+              another one. Naming the symbols without naming the cause sends you
+              to investigate the symbol, which is usually the innocent party. */}
+          {failureReasons.length > 0 && (
+            <p className="text-2xs text-text-tertiary leading-relaxed">
+              {ti(t.settingsPage.historyReason, { reasons: failureReasons.join(' · ') })}
+            </p>
+          )}
+        </>
       )}
 
       {historyMeta.backfilledAt && (

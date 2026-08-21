@@ -357,7 +357,10 @@ export const usePortfolioStore = create(
                 months,
                 symbols: Object.keys(results).length,
                 fxMonths: Object.keys(fxMonths).length,
-                errors: errors.map((e) => e.symbol).filter(Boolean),
+                // Keep the reason, not just the name. "AAPL failed" sends you
+                // looking at AAPL; "AV_RATE_LIMIT" tells you to wait and that
+                // nothing is wrong with the symbol at all.
+                errors: errors.filter((e) => e.symbol),
                 sourceStats,
                 fxError,
               },

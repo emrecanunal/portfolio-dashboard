@@ -83,6 +83,9 @@ export function buildWindows(months, size, now = new Date()) {
   return windows
 }
 
+// Alpha Vantage's free tier allows only a handful of calls a minute.
+const GLOBAL_PACING_MS = 13000
+
 const WINDOW_MONTHS = {
   bist: 36, // measured: 1→36 months all return in 0.0–0.4s
   // Alpha Vantage returns a symbol's ENTIRE history in one call — 321 months
@@ -156,8 +159,16 @@ export async function fetchPriceHistory({ holdings, months = 60, onProgress, fin
     if (symbols.length === 0) continue
 
     const windows = buildWindows(months, WINDOW_MONTHS[type] ?? 6)
+    // Alpha Vantage's free tier throttles hard and bills per request, so global
+    // symbols go one per request with a pause between them. Bundling five into
+    // one call fired five parallel upstream requests and only the first came
+    // back — the rest were throttled, which surfaced as four "failed" symbols
+    // and looked like a data problem rather than a pacing one.
+    const perRequest = type === 'global' ? 1 : 12
     const chunks = []
-    for (let i = 0; i < symbols.length; i += 12) chunks.push(symbols.slice(i, i + 12))
+    for (let i = 0; i < symbols.length; i += perRequest) {
+      chunks.push(symbols.slice(i, i + perRequest))
+    }
     const steps = windows.length * chunks.length
 
     let done = 0
@@ -180,6 +191,11 @@ export async function fetchPriceHistory({ holdings, months = 60, onProgress, fin
         }
         done += 1
         onProgress?.(type, done, steps)
+        // Space out Alpha Vantage calls. One backfill per symbol is all this
+        // ever needs — a slow minute now buys history that is then stored.
+        if (type === 'global' && done < steps) {
+          await new Promise((r) => setTimeout(r, GLOBAL_PACING_MS))
+        }
       }
     }
 
