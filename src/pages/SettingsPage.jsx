@@ -1205,6 +1205,10 @@ function ExportBackupActions() {
 
   const handleRestoreConfirm = () => {
     if (!restoreConfirm) return
+    // Download the current state first. Restore replaces everything and has no
+    // undo, so the one thing that must not depend on the user having thought
+    // ahead is being able to get back.
+    exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
     restoreFromBackup(restoreConfirm.data)
     setSuccessMessage(
       ti(t.settingsPage.restoreSuccess, {
@@ -1264,7 +1268,26 @@ function ExportBackupActions() {
         onClose={() => setRestoreConfirm(null)}
         onConfirm={handleRestoreConfirm}
         title={t.settingsPage.restoreBackup}
-        message={t.settingsPage.restoreConfirm}
+        message={[
+          t.settingsPage.restoreConfirm,
+          restoreConfirm?.summary?.dropped
+            ? ti(t.settingsPage.restoreDropped, {
+                n: restoreConfirm.summary.dropped,
+                total: restoreConfirm.summary.dropped + restoreConfirm.summary.transactions,
+              })
+            : null,
+          // Name the offending fields. "3 rows could not be read" is a dead
+          // end; "3 rows: date, quantity" tells you what to fix in the file.
+          restoreConfirm?.issues?.length
+            ? ti(t.settingsPage.restoreProblems, {
+                list: [...new Set(restoreConfirm.issues.flatMap((i) => i.problems))].join(', '),
+              })
+            : null,
+          t.settingsPage.restoreKeepsRates,
+          t.settingsPage.restoreSafetyCopy,
+        ]
+          .filter(Boolean)
+          .join('\n\n')}
         confirmLabel={t.common.confirm}
         cancelLabel={t.common.cancel}
         variant="danger"

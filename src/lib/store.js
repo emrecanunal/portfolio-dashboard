@@ -412,6 +412,11 @@ export const usePortfolioStore = create(
         })),
 
       // Restore state from a parsed JSON backup. Preserves Finnhub key (it's stripped from backups).
+      // `data` must come from parseJsonBackup, which validates every row and
+      // strips the settings that describe the moment rather than the user —
+      // exchange rates above all. Restoring a months-old USD rate would rewrite
+      // every converted figure in the app without changing a single visible
+      // label. Do not call this with a raw parsed file.
       restoreFromBackup: (data) =>
         set((s) => ({
           transactions: data.transactions || s.transactions,
@@ -424,7 +429,11 @@ export const usePortfolioStore = create(
           settings: {
             ...s.settings,
             ...(data.settings || {}),
-            // Keep current API key — don't overwrite with empty string from backup
+            // Live rates, fetch timestamps and the API key stay as they are:
+            // they belong to this browser now, not to the file.
+            fxRates: s.settings.fxRates,
+            fxMeta: s.settings.fxMeta,
+            priceMeta: s.settings.priceMeta,
             finnhubApiKey: s.settings.finnhubApiKey,
           },
         })),
