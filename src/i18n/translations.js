@@ -345,6 +345,8 @@ export const translations = {
       colTotal: 'Total (TRY)',
       colFee: 'Fee',
       colNotes: 'Notes',
+      sortBy: 'Sort by',
+      sortDirection: 'Reverse the order',
       // Footer aggregates
       footerCount: '{n} transactions',
       footerBought: 'Total bought',
@@ -675,6 +677,8 @@ export const translations = {
       colTotal: 'Toplam (TRY)',
       colFee: 'Komisyon',
       colNotes: 'Notlar',
+      sortBy: 'Sırala',
+      sortDirection: 'Sıralamayı ters çevir',
       footerCount: '{n} işlem',
       footerBought: 'Toplam alım',
       footerSold: 'Toplam satım',

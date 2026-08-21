@@ -7,6 +7,7 @@ import { Card, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { AddTransactionModal } from '../components/modals/AddTransactionModal.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
 import { cn } from '../lib/utils.js'
+import { useMediaQuery, NARROW } from '../lib/useMediaQuery.js'
 
 const TYPE_FILTERS = ['all', 'buy', 'sell', 'deposit', 'withdraw', 'exchange']
 
@@ -16,6 +17,10 @@ export default function Transactions() {
   const subPortfolios = usePortfolioStore((s) => s.subPortfolios)
   const settings = usePortfolioStore((s) => s.settings)
   const deleteTransaction = usePortfolioStore((s) => s.deleteTransaction)
+  // Cards or table — chosen here rather than with `md:hidden`, so only one
+  // of the two is ever built. See useMediaQuery.js for why that matters at
+  // several hundred transactions.
+  const isNarrow = useMediaQuery(NARROW)
 
   // === UI state ===
   const [search, setSearch] = useState('')
@@ -218,6 +223,38 @@ export default function Transactions() {
               </button>
             ))}
           </div>
+
+          {/* Sorting lives in the table header, which the phone does not show.
+              Without this the cards would be stuck on whatever the last sort
+              was, and a control that silently disappears on one device is
+              worse than one that was never there. */}
+          <div className="md:hidden flex items-center gap-2">
+            <label className="text-2xs uppercase tracking-wider text-text-tertiary shrink-0">
+              {t.transactions.sortBy}
+            </label>
+            <select
+              value={sortKey}
+              onChange={(e) => {
+                setSortKey(e.target.value)
+                setSortDir(e.target.value === 'date' ? 'desc' : 'asc')
+              }}
+              className="input-field w-auto flex-1 cursor-pointer"
+            >
+              <option value="date">{t.transactions.colDate}</option>
+              <option value="type">{t.transactions.colType}</option>
+              <option value="symbol">{t.transactions.colSymbol}</option>
+              <option value="portfolio">{t.transactions.colPortfolio}</option>
+              <option value="total">{t.transactions.colTotal}</option>
+            </select>
+            <button
+              onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+              className="tap-icon p-2 rounded-lg border border-border-subtle text-text-secondary active:bg-bg-tertiary transition-colors"
+              aria-label={t.transactions.sortDirection}
+              title={t.transactions.sortDirection}
+            >
+              {sortDir === 'asc' ? <ArrowUp size={14} strokeWidth={2} /> : <ArrowDown size={14} strokeWidth={2} />}
+            </button>
+          </div>
         </CardBody>
       </Card>
 
@@ -227,6 +264,26 @@ export default function Transactions() {
           {filtered.length === 0 ? (
             <EmptyState hasFilters={hasFilters} t={t} />
           ) : (
+            /* PHONE: one card per transaction.
+               The table is ten columns and about 900px wide. Inside a 358px
+               viewport it scrolls sideways, which means reading one
+               transaction takes two swipes and the edit and delete buttons
+               sit permanently off-screen. Same data, stacked. */
+            isNarrow ? (
+            <ul className="divide-y divide-border-subtle/50">
+              {filtered.map((tx) => (
+                <TransactionCard
+                  key={tx.id}
+                  tx={tx}
+                  subPortfolio={subPortfolios.find((p) => p.id === tx.portfolioId)}
+                  totalTRY={convertToTRY(tx.quantity * tx.price + (tx.fee || 0), tx.currency, settings.fxRates)}
+                  t={t}
+                  onEdit={() => openEdit(tx)}
+                  onDelete={() => setDeleteTarget(tx)}
+                />
+              ))}
+            </ul>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -338,6 +395,7 @@ export default function Transactions() {
                 </tbody>
               </table>
             </div>
+            )
           )}
         </CardBody>
       </Card>
@@ -411,6 +469,75 @@ function EmptyState({ hasFilters, t }) {
         {hasFilters ? t.transactions.tryAdjusting : t.transactions.emptyHint}
       </div>
     </div>
+  )
+}
+
+// One transaction as a card. Everything the table row carries, arranged for a
+// column instead of a line: identity and date on the left, the number that
+// matters on the right, and the controls under it where the thumb already is.
+function TransactionCard({ tx, subPortfolio, totalTRY, t, onEdit, onDelete }) {
+  const detail =
+    tx.type === 'exchange'
+      ? `${formatCurrency(tx.quantity, tx.currency, { decimals: 2 })} → ${formatCurrency(tx.toAmount || 0, tx.toCurrency || 'USD', { decimals: 2 })}`
+      : tx.assetType === 'cash'
+        ? null
+        : `${formatNum(tx.quantity)} × ${formatCurrency(tx.price, tx.currency, { decimals: 2 })}`
+
+  return (
+    <li className="group px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant={typeBadgeVariant(tx.type)}>{t.txn[tx.type]}</Badge>
+            <span className="font-mono text-xs text-text-primary">{tx.symbol}</span>
+            <span className="text-2xs text-text-tertiary tabular-nums">{tx.date}</span>
+          </div>
+
+          {detail && (
+            <div className="mt-1 text-2xs text-text-secondary tabular-nums">{detail}</div>
+          )}
+
+          <div className="mt-1 flex items-center gap-2 flex-wrap text-2xs text-text-tertiary">
+            {subPortfolio && (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: subPortfolio.color }} />
+                {subPortfolio.name}
+              </span>
+            )}
+            {tx.assetType !== 'cash' && <span>{t.assets[tx.assetType]}</span>}
+            {tx.fee ? (
+              <span className="tabular-nums">
+                {t.transactions.colFee} {formatCurrency(tx.fee, tx.currency, { decimals: 0 })}
+              </span>
+            ) : null}
+          </div>
+
+          {tx.notes && <div className="mt-1 text-2xs text-text-tertiary truncate">{tx.notes}</div>}
+        </div>
+
+        <div className="shrink-0 flex flex-col items-end gap-1">
+          <div className="text-sm font-medium tabular-nums text-text-primary whitespace-nowrap">
+            {formatCurrency(totalTRY, 'TRY', { decimals: 0 })}
+          </div>
+          <div className="row-actions justify-end">
+            <button
+              onClick={onEdit}
+              className="p-1.5 rounded text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-colors"
+              aria-label={t.common.edit}
+            >
+              <Pencil size={14} strokeWidth={1.75} />
+            </button>
+            <button
+              onClick={onDelete}
+              className="p-1.5 rounded text-text-tertiary hover:text-danger hover:bg-danger/10 transition-colors"
+              aria-label={t.common.delete}
+            >
+              <Trash2 size={14} strokeWidth={1.75} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </li>
   )
 }
 
