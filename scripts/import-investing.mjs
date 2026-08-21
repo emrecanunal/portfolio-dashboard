@@ -6,6 +6,8 @@
 //     --csv investing-export.csv \
 //     --into "T3" \
 //     --drop "Claude T3" \
+//     --deposit 2025-07-20=100000 \
+//     --deposit 2026-02-17=100000 \
 //     --out portfolio-backup-imported.json
 //
 // WHY A SCRIPT AND NOT THE UI
@@ -206,13 +208,66 @@ export function verify({ open, closed }, { openTotal, closedTotal } = {}) {
   return { problems, openValue, closedPL }
 }
 
+// --- funding ----------------------------------------------------------------
+
+/**
+ * "2026-02-17=100000" → { date, amount }.
+ *
+ * Deposits are DECLARED, never derived. The export records trades, not funding,
+ * and a deposit invented to make the arithmetic close would be a number in the
+ * app that the user never made.
+ */
+export function parseDeposit(text) {
+  const [date, amount] = String(text ?? '').split('=')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || '').trim())) return null
+  const value = parsePrice(amount)
+  if (!isFinite(value) || value <= 0) return null
+  return { date: date.trim(), amount: value }
+}
+
+/**
+ * End-of-day cash, walked forward through every transaction.
+ *
+ * Worth printing even when it stays positive: a portfolio whose cash goes
+ * negative in the middle of its history is not a rounding artefact, it is a
+ * missing deposit. The app will flag it later anyway (computeDataWarnings), but
+ * by then the number is buried in a screen instead of sitting in front of the
+ * person who knows when the money actually arrived.
+ */
+export function cashRunway(transactions) {
+  const sorted = [...transactions].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  )
+  let cash = 0
+  let min = Infinity
+  let minDate = null
+  let firstNegative = null
+  const negativeDays = new Set()
+
+  for (const tx of sorted) {
+    const gross = tx.quantity * tx.price
+    if (tx.type === 'deposit') cash += gross
+    else if (tx.type === 'withdraw') cash -= gross
+    else if (tx.type === 'buy') cash -= gross + (tx.fee || 0)
+    else if (tx.type === 'sell') cash += gross - (tx.fee || 0)
+
+    if (cash < 0) {
+      negativeDays.add(tx.date)
+      if (!firstNegative) firstNegative = { date: tx.date, symbol: tx.symbol, cash }
+    }
+    if (cash < min) {
+      min = cash
+      minDate = tx.date
+    }
+  }
+
+  return { closing: cash, min, minDate, firstNegative, negativeDays: negativeDays.size }
+}
+
 // --- transactions -----------------------------------------------------------
 
-// Only `buy` and `sell`. No cash: the export records trades, not funding, and
-// inventing deposits to balance them would put numbers in the app that the
-// user never entered. computeDataWarnings will flag the resulting negative
-// cash, which is honest — the deposits genuinely are missing until they add
-// them.
+// Only `buy` and `sell` come from the export. Cash arrives separately, via
+// --deposit, from what the user says they actually paid in.
 export function toTransactions({ open, closed }, portfolioId, idPrefix = 'inv') {
   const transactions = []
   let n = 0
@@ -263,12 +318,40 @@ export function toTransactions({ open, closed }, portfolioId, idPrefix = 'inv') 
   return transactions
 }
 
+/** Declared funding, in the shape the app stores cash in. */
+export function toDeposits(deposits, portfolioId, idPrefix = 'fund') {
+  return deposits.map((d, i) => ({
+    id: `${idPrefix}-${i + 1}`,
+    date: d.date,
+    type: 'deposit',
+    assetType: 'cash',
+    symbol: 'CASH',
+    quantity: 1,
+    price: d.amount,
+    fee: 0,
+    currency: 'TRY',
+    portfolioId,
+    notes: 'Para girişi',
+  }))
+}
+
 // --- CLI --------------------------------------------------------------------
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`)
   return i === -1 ? fallback : process.argv[i + 1]
 }
+
+/** Every occurrence of a repeatable flag, e.g. --deposit given twice. */
+function argAll(name) {
+  const values = []
+  process.argv.forEach((a, i) => {
+    if (a === `--${name}` && process.argv[i + 1]) values.push(process.argv[i + 1])
+  })
+  return values
+}
+
+const fmtTRY = (n) => '₺' + n.toLocaleString('tr-TR', { maximumFractionDigits: 2 })
 
 if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
   const backupPath = arg('backup')
@@ -283,10 +366,23 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
     console.error(
       'Usage: node scripts/import-investing.mjs --backup B.json --csv E.csv ' +
         '--into "T3" [--drop "Claude T3"] --out OUT.json ' +
-        '[--open-total "234.554,24"] [--closed-total "29.592,05"]'
+        '[--deposit 2025-07-20=100000] [--open-total "234.554,24"] ' +
+        '[--closed-total "29.592,05"]'
     )
     process.exit(1)
   }
+
+  const depositArgs = argAll('deposit')
+  const deposits = []
+  for (const raw of depositArgs) {
+    const parsed = parseDeposit(raw)
+    if (!parsed) {
+      console.error(`Unreadable --deposit "${raw}". Expected YYYY-MM-DD=amount.`)
+      process.exit(1)
+    }
+    deposits.push(parsed)
+  }
+  deposits.sort((a, b) => (a.date < b.date ? -1 : 1))
 
   const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
   const parsed = parseInvestingExport(readFileSync(csvPath, 'utf8'))
@@ -294,8 +390,8 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
   console.log(`\nParsed ${parsed.open.length} open lots, ${parsed.closed.length} closed lots.`)
 
   const { problems, openValue, closedPL } = verify(parsed, { openTotal, closedTotal })
-  console.log(`Open positions value : ₺${openValue.toLocaleString('tr-TR')}`)
-  console.log(`Realised P/L         : ₺${closedPL.toLocaleString('tr-TR')}`)
+  console.log(`Open positions value : ${fmtTRY(openValue)}`)
+  console.log(`Realised P/L         : ${fmtTRY(closedPL)}`)
 
   if (problems.length > 0) {
     console.error(`\n${problems.length} row(s) failed verification — NOT writing an output file:\n`)
@@ -327,20 +423,43 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
     console.log(`Dropped "${dropName}" and its ${removed} transactions.`)
   }
 
-  // Replace the target's traded positions; leave its cash and fund entries
-  // alone, since the export contains neither and the user adds those by hand.
+  // Replace the target's traded positions. Its cash is replaced only when
+  // funding was declared on the command line — otherwise whatever cash and fund
+  // entries it already had are left exactly as they were.
+  const drops = new Set(['bist'])
+  if (deposits.length > 0) drops.add('cash')
+
   const kept = transactions.filter(
-    (t) => t.portfolioId !== target.id || t.assetType !== 'bist'
+    (t) => t.portfolioId !== target.id || !drops.has(t.assetType)
   )
   const replaced = transactions.length - kept.length
   const imported = toTransactions(parsed, target.id)
+  const funding = toDeposits(deposits, target.id)
 
   console.log(
-    `"${intoName}": replaced ${replaced} BIST transactions with ${imported.length}, ` +
-      `kept ${kept.filter((t) => t.portfolioId === target.id).length} non-BIST.`
+    `"${intoName}": replaced ${replaced} transactions with ${imported.length + funding.length}, ` +
+      `kept ${kept.filter((t) => t.portfolioId === target.id).length} others.`
   )
+  for (const d of funding) console.log(`  deposit ${d.date}  ${fmtTRY(d.price)}`)
 
-  backup.transactions = [...kept, ...imported]
+  const targetTxns = [...kept.filter((t) => t.portfolioId === target.id), ...funding, ...imported]
+
+  // Does the declared funding actually cover the trading?
+  const runway = cashRunway(targetTxns)
+  console.log(`\nCash: closing ${fmtTRY(runway.closing)}, low ${fmtTRY(runway.min)} on ${runway.minDate}`)
+  if (runway.firstNegative) {
+    console.log(
+      `\n  WARNING: cash goes negative on ${runway.negativeDays} day(s), first on ` +
+        `${runway.firstNegative.date} (${runway.firstNegative.symbol}), worst ` +
+        `${fmtTRY(runway.min)} on ${runway.minDate}.\n` +
+        '  The trades are real, so the shortfall means funding is missing or dated\n' +
+        '  later than it arrived. Written anyway — this is a question for the person\n' +
+        '  who knows when the money moved, not something to paper over with a\n' +
+        '  deposit nobody made.'
+    )
+  }
+
+  backup.transactions = [...kept.filter((t) => t.portfolioId !== target.id), ...targetTxns]
   backup.exportedAt = new Date().toISOString()
 
   writeFileSync(outPath, JSON.stringify(backup, null, 2))
