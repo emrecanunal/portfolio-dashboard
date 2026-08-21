@@ -251,6 +251,19 @@ export const usePortfolioStore = create(
           let topLevelError = null
           if (sourceStats.global?.error === 'INVALID_KEY') topLevelError = 'INVALID_KEY'
           else if (sourceStats.global?.error === 'NO_API_KEY') topLevelError = 'NO_API_KEY_GLOBAL'
+          else {
+            // A source that returned NOTHING is a source that is down, and the
+            // status line has to say so. Reporting "prices updated" in green
+            // above a list of eight failed symbols invites hunting for what is
+            // wrong with ASELS, when the answer is that the local proxy is not
+            // running — which is also why the symbol list is the wrong shape of
+            // message for this: it is one fact about one source, not eight
+            // facts about eight symbols.
+            const dead = Object.entries(sourceStats).find(
+              ([, stat]) => stat?.error && (stat.ok || 0) === 0
+            )
+            if (dead) topLevelError = dead[1].error
+          }
 
           set((s) => ({
             priceCache: updatedCache,

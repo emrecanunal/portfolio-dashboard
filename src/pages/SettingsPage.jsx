@@ -566,7 +566,12 @@ function PriceStatusBar() {
     iconColor = 'text-danger'
     statusText = t.settingsPage.errInvalidKey
     secondaryText = t.settingsPage.finnhubKeyHint
-  } else if (lastError && lastError.includes('proxy') || lastError === 'Failed to fetch') {
+  } else if (
+    // Parenthesised deliberately: && binds tighter than ||, so the original
+    // read correctly by luck rather than by intent.
+    (lastError && /proxy|Failed to fetch|NetworkError|ECONNREFUSED/i.test(lastError)) ||
+    lastError === 'Failed to fetch'
+  ) {
     icon = AlertCircle
     iconColor = 'text-warning'
     statusText = t.settingsPage.refreshFailed
