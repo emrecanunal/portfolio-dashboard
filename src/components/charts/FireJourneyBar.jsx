@@ -3,8 +3,23 @@ import { useT } from '../../i18n/useT.js'
 import { formatCurrency } from '../../lib/currency.js'
 import { cn } from '../../lib/utils.js'
 
-// Multi-stop FIRE journey bar.
-// Visual reference: "Completeness" stepper (numbered milestones along a connecting bar).
+// The FIRE journey: a horizontal stepper with room for it, a vertical list
+// without.
+//
+// The stepper places five stops across the bar and hangs a two-line label under
+// each. At 1280px those labels are 120px apart and read cleanly. At 390px they
+// are 71px apart and collide into "COAST FIRBARISTA FIRE" — and the stops
+// themselves are 28px circles, well under a thumb.
+//
+// Squeezing the same layout smaller does not fix that; five labels along a
+// 358px line is not a legible thing to draw. So below sm the same data becomes
+// a vertical list: one tappable row per stage, the connecting line running down
+// the left, and the "you are here" marker sitting between the last stage
+// reached and the next one — which is the one piece of information the whole
+// component exists to convey.
+//
+// Both layouts read the same props and neither changes the position maths in
+// computeJourneyPosition; stops stay at 1/n … n/n.
 //
 // Receives:
 //   stages: array of { id, key, targetUSD, color }
@@ -27,10 +42,80 @@ export function FireJourneyBar({
   const { t } = useT()
   const n = stages.length
 
+  // Where the "you are here" marker belongs in the vertical list: after the
+  // last stage reached, i.e. before the first one still ahead.
+  const markerBefore = lastReachedIndex + 1
+
   return (
     <div className="w-full">
+      {/* ===== PHONE: vertical journey ===== */}
+      <ol className="sm:hidden relative py-1">
+        {/* The line the stops sit on. Inset to the circle's centre (16px of a
+            32px circle) so it runs through them rather than beside them. */}
+        <div className="absolute left-4 top-4 bottom-4 w-px bg-border-default -translate-x-1/2" aria-hidden="true" />
+
+        {stages.map((stage, i) => {
+          const reached = i <= lastReachedIndex
+          const isActive = stage.id === activeStageId
+          return (
+            <li key={stage.id}>
+              {markerBefore === i && (
+                <YouAreHereRow label={t.firePage.youAreHere} valueUSD={currentValueUSD} />
+              )}
+              <button
+                onClick={() => onStageClick?.(stage.id)}
+                className="w-full flex items-center gap-3 py-2 text-left rounded-lg active:bg-bg-tertiary/40 transition-colors"
+                aria-current={isActive ? 'true' : undefined}
+              >
+                <span
+                  className="relative z-10 w-8 h-8 shrink-0 rounded-full border-2 flex items-center justify-center text-2xs font-semibold tabular-nums"
+                  style={{
+                    background: reached ? stage.color : 'var(--bg-tertiary)',
+                    borderColor: reached || isActive ? stage.color : 'var(--border-default)',
+                    color: reached ? 'white' : 'var(--text-tertiary)',
+                    boxShadow: isActive
+                      ? `0 0 0 3px color-mix(in srgb, ${stage.color} 25%, transparent)`
+                      : 'none',
+                  }}
+                >
+                  {reached ? <Check size={13} strokeWidth={3} /> : i + 1}
+                </span>
+
+                <span className="flex-1 min-w-0">
+                  <span
+                    className={cn(
+                      'block text-xs uppercase tracking-wider font-medium truncate',
+                      isActive ? 'text-text-primary' : 'text-text-secondary'
+                    )}
+                  >
+                    {t.firePage[`${stage.key}Title`]}
+                  </span>
+                  <span className="block text-2xs tabular-nums text-text-tertiary">
+                    ${stage.targetUSD.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                  </span>
+                </span>
+
+                {isActive && (
+                  <span className="shrink-0 text-2xs uppercase tracking-wider text-accent border border-accent/40 rounded px-1.5 py-0.5">
+                    {t.firePage.currentlyActive}
+                  </span>
+                )}
+              </button>
+            </li>
+          )
+        })}
+
+        {/* Past the last stage — the marker has nowhere left to sit above. */}
+        {markerBefore >= stages.length && (
+          <li>
+            <YouAreHereRow label={t.firePage.youAreHere} valueUSD={currentValueUSD} />
+          </li>
+        )}
+      </ol>
+
+      {/* ===== TABLET AND UP: the stepper ===== */}
       {/* Bar wrapper — needs vertical room for floating "You are here" label */}
-      <div className="relative pt-12 pb-3">
+      <div className="hidden sm:block relative pt-12 pb-3">
         {/* "You are here" floating pill */}
         <div
           className="absolute top-0 -translate-x-1/2 transition-all duration-500"
@@ -129,6 +214,24 @@ export function FireJourneyBar({
           })}
         </div>
       </div>
+    </div>
+  )
+}
+
+// One row of the vertical journey. Not a stage — the reader's own position
+// between two of them, which is why it has no number and no tap target.
+function YouAreHereRow({ label, valueUSD }) {
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      <span className="w-8 shrink-0 flex justify-center">
+        <span className="relative z-10 w-2.5 h-2.5 rounded-full bg-accent ring-4 ring-accent/25" />
+      </span>
+      <span className="flex items-baseline gap-2 min-w-0">
+        <span className="text-2xs uppercase tracking-wider text-accent font-medium">{label}</span>
+        <span className="text-xs font-medium text-text-primary tabular-nums truncate">
+          ${valueUSD.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+        </span>
+      </span>
     </div>
   )
 }
