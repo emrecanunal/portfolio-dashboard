@@ -289,7 +289,7 @@ export function PortfolioView({ scope = { type: 'master' } }) {
                   : t.dashboard.allTimeRange}
               </CardSubtitle>
             </div>
-            <label className="flex items-center gap-1.5 text-2xs text-text-tertiary cursor-pointer select-none">
+            <label className="tap flex items-center gap-1.5 text-2xs text-text-tertiary cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={settings.showContributionsLine !== false}
@@ -330,7 +330,12 @@ export function PortfolioView({ scope = { type: 'master' } }) {
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: p.color }} />
                       <span className="text-sm font-medium text-text-primary">{p.name}</span>
                     </div>
-                    <ArrowRight size={12} className="text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity" />
+                    {/* Decoration, not a control: it hints the card is a link. Where there is
+                        no hover to reveal it, show it outright. */}
+                    <ArrowRight
+                      size={12}
+                      className="text-text-tertiary opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+                    />
                   </div>
                   <div className="text-lg font-medium text-text-primary tabular-nums">
                     {formatCurrency(p.totalValue, 'TRY', { compact: true, decimals: 1 })}
@@ -364,7 +369,7 @@ export function PortfolioView({ scope = { type: 'master' } }) {
           <CardTitle>{t.dashboard.recentTransactions}</CardTitle>
           <Link
             to="/transactions"
-            className="text-xs text-text-tertiary hover:text-text-primary flex items-center gap-1 transition-colors"
+            className="tap text-xs text-text-tertiary hover:text-text-primary flex items-center gap-1 transition-colors"
           >
             {t.common.viewAll} <ArrowRight size={12} />
           </Link>

@@ -208,7 +208,7 @@ export default function Transactions() {
                 key={f}
                 onClick={() => setTypeFilter(f)}
                 className={cn(
-                  'px-3 py-1.5 rounded-md text-xs font-medium border transition-colors',
+                  'tap px-3 py-1.5 rounded-md text-xs font-medium border transition-colors',
                   typeFilter === f
                     ? 'bg-bg-elevated border-border-strong text-text-primary'
                     : 'bg-bg-tertiary border-border-subtle text-text-secondary hover:text-text-primary hover:border-border-default'
@@ -313,7 +313,7 @@ export default function Transactions() {
                           {tx.notes || ''}
                         </td>
                         <td className="px-3 py-3">
-                          <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="row-actions justify-end">
                             <button
                               onClick={() => openEdit(tx)}
                               className="p-1.5 rounded text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-colors"

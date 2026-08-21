@@ -120,6 +120,78 @@
   .input-label {
     @apply block text-2xs uppercase tracking-wider text-text-tertiary font-medium mb-1.5;
   }
+
+  /* Row controls — edit, delete, and friends.
+   *
+   * These used to be `opacity-0 group-hover:opacity-100`, which on a phone
+   * means gone. Not dimmed, not awkward: there is no hover event on a
+   * touchscreen, so the only way to delete a transaction was to find a mouse.
+   *
+   * The condition that matters is whether the device can hover, not how wide
+   * the screen is — a tablet is wide and cannot hover, a small window on a
+   * laptop is narrow and can. `(hover: hover)` asks the real question.
+   *
+   * :focus-within is the other half. At opacity 0 the buttons were still in
+   * the tab order and still clickable, so a keyboard user could focus and
+   * activate a delete button that was invisible on screen.
+   */
+  .row-actions {
+    @apply flex items-center gap-1;
+    opacity: 1;
+  }
+  @media (hover: hover) {
+    .row-actions {
+      opacity: 0;
+      transition: opacity 150ms ease;
+    }
+    .group:hover .row-actions,
+    .row-actions:focus-within {
+      opacity: 1;
+    }
+  }
+  /* A 25px button is a coin flip with a thumb. Where there is no mouse, give
+   * these the 44px Apple and Google both settle on; a pointer keeps the
+   * denser layout, which is what makes a table readable in the first place. */
+  @media (hover: none) {
+    .row-actions > button {
+      min-width: 2.75rem;
+      min-height: 2.75rem;
+      @apply justify-center;
+    }
+  }
+
+  /* The same bargain for controls that are not in a row-actions cluster.
+   *
+   * Applied by hand rather than to every button, because a blanket rule would
+   * also stretch things that are correct at their size — and measured, not
+   * guessed: a headless run at 390px listed every interactive element under
+   * 40px, and these are the ones that were genuinely hard to hit. Controls
+   * that came out at 36px were left alone; that is tight but usable, and
+   * inflating them would cost more layout than it buys.
+   *
+   * `.tap` raises height only. Chips sit in rows where a minimum WIDTH would
+   * stretch "All" to match "Portfolios" and wreck the rhythm. */
+  @media (hover: none) {
+    .tap {
+      min-height: 2.75rem;
+    }
+    /* `.tap-icon` is for controls whose size IS the design — a colour swatch
+     * is a 20px dot and inflating it to 44px would make it a different thing.
+     * So the pixels stay and an invisible 44px pad centred on it catches the
+     * thumb. The element only has to RECEIVE the tap, not look like it. */
+    .tap-icon {
+      position: relative;
+    }
+    .tap-icon::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 2.75rem;
+      height: 2.75rem;
+      transform: translate(-50%, -50%);
+    }
+  }
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }

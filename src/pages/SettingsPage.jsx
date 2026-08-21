@@ -268,7 +268,7 @@ export default function SettingsPage() {
                       {t.settingsPage.portfolioInUse}
                     </Badge>
                   )}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="row-actions">
                     <button
                       onClick={() => openRename(p)}
                       className="p-1.5 rounded text-text-tertiary hover:text-text-primary hover:bg-bg-elevated transition-colors"
@@ -788,7 +788,7 @@ function AutoRefreshControl() {
                 type="button"
                 onClick={() => updateSettings({ autoRefreshMinutes: m })}
                 className={cn(
-                  'px-2.5 py-1 rounded-md text-2xs font-medium border transition-colors tabular-nums',
+                  'tap px-2.5 py-1 rounded-md text-2xs font-medium border transition-colors tabular-nums',
                   minutes === m
                     ? 'bg-bg-elevated border-border-strong text-text-primary'
                     : 'bg-bg-tertiary border-border-subtle text-text-secondary hover:text-text-primary'
@@ -855,7 +855,7 @@ function FinnhubKeyInput() {
         <button
           type="button"
           onClick={() => setShowKey(!showKey)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-2xs text-text-tertiary hover:text-text-primary transition-colors"
+          className="tap absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-2xs text-text-tertiary hover:text-text-primary transition-colors"
         >
           {showKey ? 'hide' : 'show'}
         </button>
@@ -1144,7 +1144,7 @@ function ColorSwatch({ color, onChange }) {
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="w-5 h-5 rounded-full ring-2 ring-offset-2 ring-offset-bg-secondary transition-all hover:scale-110"
+        className="tap-icon w-5 h-5 rounded-full ring-2 ring-offset-2 ring-offset-bg-secondary transition-all hover:scale-110"
         style={{ background: color, '--tw-ring-color': 'var(--border-default)' }}
         aria-label="Change color"
       />
