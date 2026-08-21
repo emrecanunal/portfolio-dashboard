@@ -10,6 +10,10 @@
 //     --deposit 2026-02-17=100000 \
 //     --out portfolio-backup-imported.json
 //
+//   ... and for a US export, where the money and the tickers are different:
+//
+//     --into "Amerika" --asset-type global --currency USD
+//
 // WHY A SCRIPT AND NOT THE UI
 //
 // A year of trading is ~170 lots — 310 transactions once each closed lot becomes a
@@ -32,6 +36,13 @@
 // NUMBER FORMATS: the export mixes conventions in the same row. Prices are
 // Turkish ("1.771,000" = 1771.0), quantities are English ("446.37600000" =
 // 446.376). Read each with the rule that fits its column, not a shared guess.
+// This holds even for dollar amounts: a US position prints as "$1.223,72",
+// which is 1223.72 and not 122372.
+//
+// COMMISSION: where the export charges one, it is already inside the P/L it
+// declares — an open lot nets one commission, a closed lot two. Verifying
+// without it puts every row off by exactly the fee, which is small enough to
+// look like rounding and is not.
 
 import { readFileSync, writeFileSync } from 'node:fs'
 
@@ -65,11 +76,17 @@ function parseCsvLine(line) {
 
 // --- numbers ----------------------------------------------------------------
 
-/** Turkish price: dot groups thousands, comma is the decimal point. */
+/**
+ * Turkish price: dot groups thousands, comma is the decimal point.
+ *
+ * Currency marks are stripped wherever they sit, because the export puts the
+ * minus sign outside them ("-$13,12"). Left in, that parses as NaN, and a NaN
+ * silently poisons every sum it touches.
+ */
 export function parsePrice(text) {
   if (typeof text === 'number') return text
   const cleaned = String(text ?? '')
-    .replace(/[₺%\s]/g, '')
+    .replace(/[₺$€£%\s]/g, '')
     .trim()
   if (!cleaned) return NaN
   const negative = cleaned.startsWith('-')
@@ -91,12 +108,26 @@ export function parseDate(text) {
   return `${m[3]}-${m[2]}-${m[1]}`
 }
 
-/** "RALYH.IS" → "RALYH". The app stores BIST codes bare. */
+/**
+ * Investing's ticker → the one the app prices with.
+ *
+ *   RALYH.IS → RALYH    BIST codes are stored bare
+ *   GOOGL.O  → GOOGL    .O/.OQ/.K/.N/.P are exchange tags, not part of the ticker
+ *   HIMS.K   → HIMS
+ *   BRKb     → BRK.B    a trailing lowercase letter is a share class
+ *
+ * The share-class case has to run before upper-casing, or the lowercase b that
+ * marks it is gone. Getting this wrong does not throw: it produces a symbol the
+ * price source has never heard of, and the position quietly values at cost with
+ * a profit of exactly 0%.
+ */
 export function normaliseSymbol(text) {
-  return String(text ?? '')
-    .trim()
-    .toUpperCase()
-    .replace(/\.IS$/, '')
+  const trimmed = String(text ?? '').trim()
+  const withoutExchange = trimmed.replace(/\.(OQ|O|K|N|P)$/, '')
+  // Uppercase prefix, single lowercase tail — that contrast IS the signal. Allow
+  // a lowercase prefix too and "nok" becomes "NO.K", a symbol for nothing.
+  const withClass = withoutExchange.replace(/^([A-Z]{1,5})([a-z])$/, '$1.$2')
+  return withClass.toUpperCase().replace(/\.IS$/, '')
 }
 
 // --- the export -------------------------------------------------------------
@@ -159,6 +190,8 @@ export function parseInvestingExport(text) {
 
     if (section === 'open') {
       row.currentPrice = parsePrice(at('Mevcut Fiyat'))
+      row.commission = parsePrice(at('Komisyon'))
+      row.declaredPL = parsePrice(at('Net K/Z'))
       open.push(row)
     } else {
       row.closeDate = parseDate(at('Kapanış Tarihi'))
@@ -176,36 +209,81 @@ export function parseInvestingExport(text) {
 // Per-row arithmetic the export itself asserts. A misread decimal separator
 // changes a number by a factor of a thousand, which this catches instantly;
 // an off-by-one column shift changes it by more.
-export function verify({ open, closed }, { openTotal, closedTotal } = {}) {
+//
+// Commission is part of the assertion, not a detail: the declared P/L is net of
+// it. One leg for a position still open, two for one that was closed.
+
+/**
+ * The commission charged per leg, taken from the export rather than assumed.
+ *
+ * Returns null when the export has no commission column at all (the BIST ones
+ * do not), and throws when the rows disagree — at that point a single number
+ * cannot describe the closed lots, which carry no commission column of their
+ * own, and guessing one would corrupt every closed row by the difference.
+ */
+export function perLegCommission(open) {
+  const values = open.map((r) => r.commission).filter((c) => isFinite(c) && c > 0)
+  if (values.length === 0) return null
+  const distinct = [...new Set(values.map((v) => v.toFixed(4)))]
+  if (distinct.length > 1) {
+    throw new Error(
+      `open lots declare more than one commission (${distinct.join(', ')}); ` +
+        'pass --commission to say which applies to the closed lots'
+    )
+  }
+  return values[0]
+}
+
+export function verify({ open, closed }, { openTotal, closedTotal, openPL, commission = 0 } = {}) {
   const problems = []
+  const near = (a, b) => Math.abs(a - b) <= 0.05
+
+  for (const row of open) {
+    if (!isFinite(row.declaredPL)) continue
+    // One leg: the position has been bought and not yet sold.
+    const fee = isFinite(row.commission) && row.commission > 0 ? row.commission : commission
+    const computed = (row.currentPrice - row.openPrice) * row.quantity - fee
+    if (!near(computed, row.declaredPL)) {
+      problems.push(
+        `${row.symbol} open ${row.openDate}: ` +
+          `(${row.currentPrice} − ${row.openPrice}) × ${row.quantity} − ${fee} = ${computed.toFixed(2)}, ` +
+          `file says ${row.declaredPL}`
+      )
+    }
+  }
 
   for (const row of closed) {
     if (!row.closeDate || !isFinite(row.closePrice)) {
       problems.push(`${row.symbol} ${row.openDate}: unreadable close`)
       continue
     }
-    const computed = (row.closePrice - row.openPrice) * row.quantity
+    // Two legs: bought and sold.
+    const computed = (row.closePrice - row.openPrice) * row.quantity - 2 * commission
     // A cent of rounding per lot is expected; anything more is a misread.
-    if (isFinite(row.declaredPL) && Math.abs(computed - row.declaredPL) > 0.05) {
+    if (isFinite(row.declaredPL) && !near(computed, row.declaredPL)) {
       problems.push(
         `${row.symbol} ${row.openDate}→${row.closeDate}: ` +
-          `(${row.closePrice} − ${row.openPrice}) × ${row.quantity} = ${computed.toFixed(2)}, ` +
+          `(${row.closePrice} − ${row.openPrice}) × ${row.quantity} − ${2 * commission} = ${computed.toFixed(2)}, ` +
           `file says ${row.declaredPL}`
       )
     }
   }
 
   const openValue = open.reduce((sum, r) => sum + r.quantity * r.currentPrice, 0)
+  const openPLSum = open.reduce((sum, r) => sum + (isFinite(r.declaredPL) ? r.declaredPL : 0), 0)
   const closedPL = closed.reduce((sum, r) => sum + (r.declaredPL || 0), 0)
 
   if (openTotal != null && Math.abs(openValue - openTotal) > 1) {
     problems.push(`open positions total ${openValue.toFixed(2)}, file says ${openTotal}`)
   }
+  if (openPL != null && Math.abs(openPLSum - openPL) > 1) {
+    problems.push(`unrealised P/L total ${openPLSum.toFixed(2)}, file says ${openPL}`)
+  }
   if (closedTotal != null && Math.abs(closedPL - closedTotal) > 1) {
     problems.push(`closed P/L total ${closedPL.toFixed(2)}, file says ${closedTotal}`)
   }
 
-  return { problems, openValue, closedPL }
+  return { problems, openValue, openPLSum, closedPL }
 }
 
 // --- funding ----------------------------------------------------------------
@@ -283,17 +361,22 @@ export function cashRunway(transactions) {
 
 // Only `buy` and `sell` come from the export. Cash arrives separately, via
 // --deposit, from what the user says they actually paid in.
-export function toTransactions({ open, closed }, portfolioId, idPrefix = 'inv') {
+//
+// The commission rides on each leg as a fee, where the app already knows what
+// to do with it: it raises the cost basis of a buy and reduces the proceeds of
+// a sell, which is exactly how the export's own P/L was computed.
+export function toTransactions(
+  { open, closed },
+  portfolioId,
+  { assetType = 'bist', currency = 'TRY', commission = 0, idPrefix = 'inv' } = {}
+) {
   const transactions = []
   let n = 0
   const push = (tx) => transactions.push({ id: `${idPrefix}-${++n}`, ...tx })
 
-  const base = {
-    assetType: 'bist',
-    currency: 'TRY',
-    fee: 0,
-    portfolioId,
-  }
+  const base = { assetType, currency, portfolioId }
+  const feeFor = (row) =>
+    isFinite(row.commission) && row.commission > 0 ? row.commission : commission
 
   for (const row of open) {
     push({
@@ -303,6 +386,7 @@ export function toTransactions({ open, closed }, portfolioId, idPrefix = 'inv') 
       symbol: row.symbol,
       quantity: row.quantity,
       price: row.openPrice,
+      fee: feeFor(row),
       notes: row.name,
     })
   }
@@ -315,6 +399,7 @@ export function toTransactions({ open, closed }, portfolioId, idPrefix = 'inv') 
       symbol: row.symbol,
       quantity: row.quantity,
       price: row.openPrice,
+      fee: commission,
       notes: row.name,
     })
     push({
@@ -324,6 +409,7 @@ export function toTransactions({ open, closed }, portfolioId, idPrefix = 'inv') 
       symbol: row.symbol,
       quantity: row.quantity,
       price: row.closePrice,
+      fee: commission,
       notes: row.name,
     })
   }
@@ -334,7 +420,7 @@ export function toTransactions({ open, closed }, portfolioId, idPrefix = 'inv') 
 }
 
 /** Declared funding, in the shape the app stores cash in. */
-export function toDeposits(deposits, portfolioId, idPrefix = 'fund') {
+export function toDeposits(deposits, portfolioId, currency = 'TRY', idPrefix = 'fund') {
   return deposits.map((d, i) => ({
     id: `${idPrefix}-${i + 1}`,
     date: d.date,
@@ -344,7 +430,7 @@ export function toDeposits(deposits, portfolioId, idPrefix = 'fund') {
     quantity: 1,
     price: d.amount,
     fee: 0,
-    currency: 'TRY',
+    currency,
     portfolioId,
     notes: 'Para girişi',
   }))
@@ -374,15 +460,19 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
   const intoName = arg('into')
   const dropName = arg('drop')
   const outPath = arg('out')
+  const assetType = arg('asset-type', 'bist')
+  const currency = (arg('currency', 'TRY') || 'TRY').toUpperCase()
   const openTotal = arg('open-total') ? parsePrice(arg('open-total')) : null
   const closedTotal = arg('closed-total') ? parsePrice(arg('closed-total')) : null
+  const openPL = arg('open-pl') ? parsePrice(arg('open-pl')) : null
 
   if (!backupPath || !csvPath || !intoName || !outPath) {
     console.error(
       'Usage: node scripts/import-investing.mjs --backup B.json --csv E.csv ' +
         '--into "T3" [--drop "Claude T3"] --out OUT.json ' +
+        '[--asset-type bist|global] [--currency TRY|USD] [--commission 1.50] ' +
         '[--deposit 2025-07-20=100000] [--open-total "234.554,24"] ' +
-        '[--closed-total "29.592,05"]'
+        '[--open-pl "331,36"] [--closed-total "29.592,05"]'
     )
     process.exit(1)
   }
@@ -402,11 +492,39 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
   const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
   const parsed = parseInvestingExport(readFileSync(csvPath, 'utf8'))
 
-  console.log(`\nParsed ${parsed.open.length} open lots, ${parsed.closed.length} closed lots.`)
+  // Taken from the export when it carries one, so the closed lots — which have
+  // no commission column — are charged what the open ones actually were.
+  let commission = arg('commission') ? parsePrice(arg('commission')) : null
+  if (commission == null) {
+    try {
+      commission = perLegCommission(parsed.open)
+    } catch (err) {
+      console.error(err.message)
+      process.exit(1)
+    }
+  }
+  commission = commission || 0
 
-  const { problems, openValue, closedPL } = verify(parsed, { openTotal, closedTotal })
-  console.log(`Open positions value : ${fmtTRY(openValue)}`)
-  console.log(`Realised P/L         : ${fmtTRY(closedPL)}`)
+  const money = (n) =>
+    (currency === 'TRY' ? '₺' : currency === 'USD' ? '$' : currency + ' ') +
+    n.toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+
+  console.log(`\nParsed ${parsed.open.length} open lots, ${parsed.closed.length} closed lots.`)
+  if (commission > 0) console.log(`Commission per leg  : ${money(commission)}`)
+
+  const { problems, openValue, openPLSum, closedPL } = verify(parsed, {
+    openTotal,
+    closedTotal,
+    openPL,
+    commission,
+  })
+  console.log(`Open positions value: ${money(openValue)}`)
+  // Only when the export declares it — the BIST exports carry no such column,
+  // and printing a summed-nothing as a confident 0 would be a small lie.
+  if (parsed.open.some((r) => isFinite(r.declaredPL))) {
+    console.log(`Unrealised P/L      : ${money(openPLSum)}`)
+  }
+  console.log(`Realised P/L        : ${money(closedPL)}`)
 
   if (problems.length > 0) {
     console.error(`\n${problems.length} row(s) failed verification — NOT writing an output file:\n`)
@@ -415,7 +533,7 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
     console.error('\nThe export contradicts itself, or it was read wrong. Either way, stop here.')
     process.exit(1)
   }
-  console.log('Verification: every row and both totals agree with the file.\n')
+  console.log('Verification: every row and every declared total agrees.\n')
 
   const target = backup.subPortfolios.find((p) => p.name === intoName)
   if (!target) {
@@ -438,39 +556,53 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
     console.log(`Dropped "${dropName}" and its ${removed} transactions.`)
   }
 
-  // Replace the target's traded positions. Its cash is replaced only when
-  // funding was declared on the command line — otherwise whatever cash and fund
-  // entries it already had are left exactly as they were.
-  const drops = new Set(['bist'])
+  // Replace only the traded positions of the kind this export describes. Its
+  // cash is replaced too, but only when funding was declared on the command
+  // line — otherwise whatever the portfolio already had is left alone.
+  const drops = new Set([assetType])
   if (deposits.length > 0) drops.add('cash')
 
   const kept = transactions.filter(
     (t) => t.portfolioId !== target.id || !drops.has(t.assetType)
   )
   const replaced = transactions.length - kept.length
-  const imported = toTransactions(parsed, target.id)
-  const funding = toDeposits(deposits, target.id)
+  const imported = toTransactions(parsed, target.id, { assetType, currency, commission })
+  const funding = toDeposits(deposits, target.id, currency)
 
   console.log(
-    `"${intoName}": replaced ${replaced} transactions with ${imported.length + funding.length}, ` +
-      `kept ${kept.filter((t) => t.portfolioId === target.id).length} others.`
+    `"${intoName}": replaced ${replaced} ${assetType} transactions with ` +
+      `${imported.length + funding.length}, kept ` +
+      `${kept.filter((t) => t.portfolioId === target.id).length} others.`
   )
-  for (const d of funding) console.log(`  deposit ${d.date}  ${fmtTRY(d.price)}`)
+  for (const d of funding) console.log(`  deposit ${d.date}  ${money(d.price)}`)
 
   const targetTxns = [...kept.filter((t) => t.portfolioId === target.id), ...funding, ...imported]
 
-  // Does the declared funding actually cover the trading?
-  const runway = cashRunway(targetTxns)
-  console.log(`\nCash: closing ${fmtTRY(runway.closing)}, low ${fmtTRY(runway.min)} on ${runway.minDate}`)
-  if (runway.firstNegative) {
+  // Does the funding on record actually cover the trading? Reported in the
+  // portfolio's own currency, so no exchange rate can distort the answer.
+  const single = new Set(targetTxns.map((t) => t.currency))
+  if (single.size === 1) {
+    const runway = cashRunway(targetTxns)
     console.log(
-      `\n  WARNING: ${runway.negativeDays} day(s) close with negative cash, from ` +
-        `${runway.firstNegative.date} to ${runway.lastNegative}, worst ` +
-        `${fmtTRY(runway.min)} on ${runway.minDate}.\n` +
-        '  The trades are real, so the shortfall means funding is missing or dated\n' +
-        '  later than it arrived. Written anyway — this is a question for the person\n' +
-        '  who knows when the money moved, not something to paper over with a\n' +
-        '  deposit nobody made.'
+      `\nCash: closing ${money(runway.closing)}, low ${money(runway.min)} on ${runway.minDate}`
+    )
+    if (runway.firstNegative) {
+      console.log(
+        `\n  WARNING: ${runway.negativeDays} day(s) close with negative cash, from ` +
+          `${runway.firstNegative.date} to ${runway.lastNegative}, worst ` +
+          `${money(runway.min)} on ${runway.minDate}.\n` +
+          '  The trades are real, so the shortfall means funding is missing or dated\n' +
+          '  later than it arrived. Written anyway — this is a question for the person\n' +
+          '  who knows when the money moved, not something to paper over with a\n' +
+          '  deposit nobody made.'
+      )
+    }
+  } else {
+    // Mixed currencies need exchange rates to add up, and this script has none.
+    // The app does; it will report on this portfolio itself.
+    console.log(
+      `\nCash: not walked — this portfolio holds ${[...single].sort().join(' and ')} ` +
+        'and converting between them needs rates the app has and this does not.'
     )
   }
 
