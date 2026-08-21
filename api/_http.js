@@ -43,21 +43,46 @@ export function setCacheHeaders(res, { maxAge = 300, swr = 600 } = {}) {
 /**
  * CORS + method guard shared by every price endpoint.
  *
- * ALLOWED_ORIGIN (set it in the Vercel dashboard to your own deployment URL)
- * turns these endpoints from an open scraping proxy that anyone can point at
- * İş Yatırım on your behalf into something only your own app can call. Left
- * unset it falls back to '*', which keeps local development and any preview
- * deployment working.
+ * WHAT THIS DOES AND DOES NOT DO
+ *
+ * Set ALLOWED_ORIGIN to your deployment URL and a page on some other site can
+ * no longer call these endpoints from a visitor's browser. That is the whole
+ * of it. CORS is a rule browsers agree to follow; curl, a script, or another
+ * server sends no Origin header at all and is unaffected. The header cannot
+ * be made to stop them, and no arrangement of it will.
+ *
+ * So this is worth setting — it is free and it closes the easy case — but it
+ * is not a lock on the door. If these endpoints ever need one (the Alpha
+ * Vantage key behind /api/history is good for 25 calls a day, which is a
+ * quota one bored person could drain), the answer is a shared secret the app
+ * sends and the function checks, or a rate limit. Not this.
+ *
+ * A mismatched Origin is refused with 403 rather than merely denied the
+ * header. Withholding the header leaves the function to run, fetch upstream
+ * and bill you for it, only for the browser to discard the answer at the end:
+ * all of the cost, none of the point.
+ *
+ * Unset, it falls back to '*' — which keeps local development and preview
+ * deployments working, since their URLs are not known in advance.
  *
  * Returns true when the caller has already been answered and the handler
  * should stop.
  */
 export function applyCors(req, res) {
   const allowed = process.env.ALLOWED_ORIGIN || '*'
+  const origin = req.headers?.origin
+
   res.setHeader('Access-Control-Allow-Origin', allowed)
   res.setHeader('Vary', 'Origin')
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+
+  // No Origin means same-origin (the app's own fetch, which is served from
+  // this very domain) or a non-browser caller. Neither is what this guards.
+  if (allowed !== '*' && origin && origin !== allowed) {
+    res.status(403).json({ error: 'Origin not allowed' })
+    return true
+  }
 
   if (req.method === 'OPTIONS') {
     res.status(204).end()

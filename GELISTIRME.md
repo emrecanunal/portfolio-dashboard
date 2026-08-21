@@ -249,7 +249,8 @@ private yap veya geçmişi temizle — bana sor, birlikte hallederiz.
 ## 5. Vercel ve yayına alma
 
 `vercel.json` hazır, `api/*.js` dosyaları Vercel'de otomatik olarak serverless
-fonksiyona dönüşür. Ekstra bir ayar gerekmiyor.
+fonksiyona dönüşür. Kod tarafında ayar gerekmiyor; iki ortam değişkeni hariç
+(hemen aşağıda).
 
 **Bağlıysa akış şu:** `git push` → Vercel değişikliği görür → derler → canlıya alır
 (~1 dakika). Yani ayrı bir "deploy" komutu yok, push yeterli.
@@ -262,6 +263,37 @@ lokalde `npm run build` çalıştırınca aynı hatayı görürsün.
 Bağlı değilse: Vercel'de **Add New → Project** → GitHub'dan `portfolio-dashboard`
 deposunu seç → ayarlara dokunmadan **Deploy**. Vite'ı ve `api/` klasörünü kendi
 tanır.
+
+### Ortam değişkenleri — hangisi hangi ortamda
+
+Vercel'in üç ortamı var ve **her biri kendi değişken listesini tutar.** Production'a
+eklediğin bir anahtar Preview'da yoktur; bu bir hata değil, tasarım böyle.
+
+| Değişken | Production | Preview | Ne olur olmazsa |
+|---|---|---|---|
+| `ALPHAVANTAGE_KEY` | canlı anahtar | canlı anahtar | Geçmiş fiyat dolumu `AV_NO_KEY` döner |
+| `ALLOWED_ORIGIN` | canlı adresin | **boş bırak** | Uç noktaları başka siteler de tarayıcıdan çağırabilir |
+
+Yol: Vercel → proje → **Settings → Environments** → ilgili ortamın satırı →
+**Environment Variables**. Takım (team) seviyesindeki Environment Variables sayfası
+başka bir yer; oraya eklersen proje görmez.
+
+Değişken ekledikten sonra **yeniden deploy** gerekir. Mevcut deploy değişkenleri
+derleme anında alır, sonradan eklenen bir anahtarı kendiliğinden görmez —
+Deployments → son deploy → ⋯ → **Redeploy**.
+
+**`ALLOWED_ORIGIN` Preview'da neden boş:** her preview deploy'unun adresi farklı ve
+önceden bilinemez. Sabit bir değer yazarsan her dal deploy'u doğar doğmaz kırılır.
+Boş bırakıldığında `*`'a düşer, yani Preview serbest kalır — kabul edilebilir, çünkü
+o adresleri kimse bilmiyor.
+
+**Ve dürüst olmak gerekirse `ALLOWED_ORIGIN` bir kilit değil.** CORS, tarayıcıların
+uymayı kabul ettiği bir kuraldır. `curl`, bir script ya da başka bir sunucu `Origin`
+başlığı hiç göndermez ve bu ayardan etkilenmez. Kapattığı şey şu: başka bir sitedeki
+sayfanın, ziyaretçisinin tarayıcısı üzerinden senin uç noktalarını çağırması.
+Bedava olduğu ve kolay durumu kapattığı için ayarlanmalı — ama Alpha Vantage'ın
+günde 25 çağrılık kotasını gerçekten korumak istersen gereken şey uygulamanın
+gönderdiği bir gizli anahtar ya da hız sınırı; başlık değil.
 
 ---
 
@@ -370,7 +402,8 @@ Finnhub'da anahtarın yarıları tek tek test edildi. Sonuç değişmedi.
 | Alpha Vantage | `.env.local` + Vercel ortam değişkeni | **Sunucu tarafında okunuyor** — tarayıcıya inmiyor, yedeğe girmiyor |
 
 `.env.local` git'e girmez (`.gitignore:5`). Vercel'de `ALPHAVANTAGE_KEY`
-tanımlı değilse canlıda geçmiş dolumu `AV_NO_KEY` döner.
+tanımlı değilse canlıda geçmiş dolumu `AV_NO_KEY` döner — ve Production'da tanımlı
+olması Preview'da da tanımlı olduğu anlamına gelmez ([bölüm 5](#5-vercel-ve-yayına-alma)).
 
 Anahtarı düzenleyeceksen dosyayı **editörde aç**. Terminalden `pbpaste` ile
 yazmak, komutu kopyalamanın panoyu bozması yüzünden iki kez ters gitti.
