@@ -65,6 +65,39 @@ loadEnvLocal()
 // one sends you off to regenerate a perfectly good token. Finnhub keys are long
 // ASCII alphanumeric strings; anything else got here by copy-pasting the
 // instructions rather than the dashboard.
+// Finnhub API keys are 20 characters. The dashboard shows the API key with a
+// second value right beneath it, and selecting across both yields a 40-char
+// string that is two keys stuck together — which Finnhub rejects wholesale.
+// Split it so the halves can be tested individually rather than guessed at.
+export function finnhubCandidates(key) {
+  const k = (key || '').trim()
+  if (k.length !== 40) return [{ label: 'as given', key: k }]
+  const first = k.slice(0, 20)
+  const second = k.slice(20)
+  return [
+    { label: 'as given (40 chars)', key: k },
+    { label: 'first half', key: first },
+    { label: 'second half', key: second },
+  ]
+}
+
+// Validity has to be tested against /quote, not the candle endpoint: candles
+// are premium, so they answer 403 for a perfectly good free-tier key and the
+// two failures are indistinguishable. /quote is what the app uses for live
+// prices, so it is also the thing that actually matters.
+async function finnhubQuoteWorks(key) {
+  const res = await fetch(
+    `https://finnhub.io/api/v1/quote?symbol=AAPL&token=${encodeURIComponent(key)}`,
+    { headers: { Accept: 'application/json' } }
+  )
+  if (res.status === 401 || res.status === 403) return { ok: false, why: `HTTP ${res.status}` }
+  if (!res.ok) return { ok: false, why: `HTTP ${res.status}` }
+  const data = await res.json()
+  // Finnhub answers 200 with an all-zero body for an unknown token.
+  if (typeof data?.c !== 'number' || data.c === 0) return { ok: false, why: 'empty quote' }
+  return { ok: true, price: data.c }
+}
+
 function describeKey(key) {
   if (!key) return { usable: false, why: 'none' }
   const trimmed = key.trim()
@@ -166,7 +199,15 @@ if (rows.some((r) => r.type === 'global' && !r.ok)) {
     console.log('  → both present; if the fetch still fails, Yahoo is blocking this address.')
   }
 
-  if (!process.env.ALPHAVANTAGE_KEY) {
+}
+
+// --- Are the keys we hold actually usable? ---------------------------
+// Nothing here depends on whether the history fetches above succeeded.
+// This lived inside the "global failed" branch, so the moment Alpha
+// Vantage started working the Finnhub check silently stopped running —
+// exactly when someone would still be trying to find out why live global
+// prices were rejected.
+if (!process.env.ALPHAVANTAGE_KEY) {
     console.log(
       'Alpha Vantage: NO KEY — this is the primary global source now that Yahoo,\n' +
         '  Stooq and Finnhub have all closed. Get a free one at\n' +
@@ -175,44 +216,62 @@ if (rows.some((r) => r.type === 'global' && !r.ok)) {
     )
   }
 
-  const key = process.env.FINNHUB_KEY
-  const keyInfo = describeKey(key)
 
-  if (key && !keyInfo.usable) {
+{
+
+const key = process.env.FINNHUB_KEY
+const keyInfo = describeKey(key)
+
+if (key && !keyInfo.usable) {
+  console.log(
+    `Finnhub fallback: NOT A KEY — got "${keyInfo.shown}".\n` +
+      '  That is not a Finnhub token — most likely the clipboard held\n' +
+      '  something else, such as the command you just copied to run this.\n' +
+      '  Open .env.local in an editor and put the key from the app\'s\n' +
+      '  Settings on the FINNHUB_KEY= line. One line, no quotes.'
+  )
+} else if (keyInfo.usable) {
+  console.log(`Finnhub key in use: ${keyInfo.fingerprint}`)
+
+  // Which part of the stored value is actually a key?
+  for (const candidate of finnhubCandidates(key)) {
+    const verdict = await finnhubQuoteWorks(candidate.key).catch((e) => ({
+      ok: false,
+      why: e.message,
+    }))
+    const shown = `${candidate.key.slice(0, 4)}…${candidate.key.slice(-4)}`
     console.log(
-      `Finnhub fallback: NOT A KEY — got "${keyInfo.shown}".\n` +
-        '  That is not a Finnhub token — most likely the clipboard held\n' +
-        '  something else, such as the command you just copied to run this.\n' +
-        '  Open .env.local in an editor and put the key from the app\'s\n' +
-        '  Settings on the FINNHUB_KEY= line. One line, no quotes.'
+      `  live quote · ${candidate.label.padEnd(20)} ${shown}  ` +
+        (verdict.ok ? `WORKS (AAPL ${verdict.price})` : `no — ${verdict.why}`)
     )
-  } else if (keyInfo.usable) {
-    console.log(`Finnhub key in use: ${keyInfo.fingerprint}`)
-    const started = Date.now()
-    try {
-      const got = await fetchFinnhubMonthlyHistory(DEFAULTS.global, months, key)
-      const keys = Object.keys(got)
-      console.log(
-        `Finnhub fallback: OK — ${keys.length} months ${keys[0]} → ${keys[keys.length - 1]} ` +
-          `(${Date.now() - started}ms)`
-      )
-    } catch (err) {
-      console.log(`Finnhub fallback: FAIL — ${err.message}`)
-      if (err.message === 'FINNHUB_INVALID_KEY') {
-        console.log(
-          '  Finnhub rejected this token. If you regenerated the key recently,\n' +
-            "  the app's Settings field still holds the revoked one — live global\n" +
-            '  prices will be failing too. Update both.'
-        )
-      }
-    }
-  } else {
-    console.log(
-      'Finnhub fallback: not tested.\n' +
-        '  Store the key once:  echo "FINNHUB_KEY=your-key" >> .env.local\n' +
-        '  Or just this run:    FINNHUB_KEY=$(pbpaste) npm run probe:history'
-    )
+    await new Promise((r) => setTimeout(r, 1100))
   }
+  const started = Date.now()
+  try {
+    const got = await fetchFinnhubMonthlyHistory(DEFAULTS.global, months, key)
+    const keys = Object.keys(got)
+    console.log(
+      `Finnhub fallback: OK — ${keys.length} months ${keys[0]} → ${keys[keys.length - 1]} ` +
+        `(${Date.now() - started}ms)`
+    )
+  } catch (err) {
+    console.log(`Finnhub fallback: FAIL — ${err.message}`)
+    if (err.message === 'FINNHUB_INVALID_KEY') {
+      console.log(
+        '  Finnhub rejected this token. If you regenerated the key recently,\n' +
+          "  the app's Settings field still holds the revoked one — live global\n" +
+          '  prices will be failing too. Update both.'
+      )
+    }
+  }
+} else {
+  console.log(
+    'Finnhub fallback: not tested.\n' +
+      '  Store the key once:  echo "FINNHUB_KEY=your-key" >> .env.local\n' +
+      '  Or just this run:    FINNHUB_KEY=$(pbpaste) npm run probe:history'
+  )
+}
+
 }
 
 // --- How wide a window will İş Yatırım serve? ---------------------------

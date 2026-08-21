@@ -106,7 +106,23 @@ function isYatirimDate(date) {
   return `${d}-${m}-${date.getFullYear()}`
 }
 
+// İş Yatırım is erratic rather than slow. A sweep on 21 Aug 2026 measured, for
+// the SAME symbol, one month at 8.8s and three months timing out, while twelve
+// months came back in 0.5s and thirty-six in 1.1s — no relationship to width at
+// all. So a failure here is worth one more ask before it is believed: a single
+// retry turns most of these into successes, and two attempts of 8s still fit
+// inside Vercel's ceiling with room to answer.
 async function bistHistory(symbol, months, window) {
+  try {
+    return await bistHistoryOnce(symbol, months, window)
+  } catch (err) {
+    // A genuinely absent symbol will not appear on a second attempt either.
+    if (/IS_NO_DATA|IS_HTTP_4/.test(err.message)) throw err
+    return await bistHistoryOnce(symbol, months, window)
+  }
+}
+
+async function bistHistoryOnce(symbol, months, window) {
   const { start, end } = resolveWindow(months, window)
   const url =
     'https://www.isyatirim.com.tr/_layouts/15/Isyatirim.Website/Common/Data.aspx/HisseTekil' +
@@ -116,7 +132,9 @@ async function bistHistory(symbol, months, window) {
   const res = await fetchWithTimeout(
     url,
     { headers: { 'User-Agent': UA, Accept: 'application/json,text/plain,*/*' } },
-    9000
+    // Halved from 9s so that two attempts plus a response still clear Vercel's
+    // ten-second limit.
+    4000
   )
   if (!res.ok) throw new Error(`IS_HTTP_${res.status}`)
 
