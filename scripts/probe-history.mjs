@@ -219,7 +219,21 @@ if (!process.env.ALPHAVANTAGE_KEY) {
 
 {
 
-const key = process.env.FINNHUB_KEY
+// Every FINNHUB_KEY* variable is tested, so two candidates can be compared in
+// one run instead of one edit-and-rerun cycle each. 401 means the token is
+// rejected outright; 403 means it is recognised and the endpoint is not
+// included — which is the difference between "get a new key" and "keep this
+// one, it just cannot do candles".
+const finnhubKeys = Object.entries(process.env)
+  .filter(([name, value]) => /^FINNHUB_KEY/.test(name) && value)
+  .sort()
+
+for (const [name, candidateKey] of finnhubKeys) {
+  console.log(`\n[${name}]`)
+  await checkFinnhubKey(candidateKey)
+}
+
+async function checkFinnhubKey(key) {
 const keyInfo = describeKey(key)
 
 if (key && !keyInfo.usable) {
@@ -266,10 +280,9 @@ if (key && !keyInfo.usable) {
   }
 } else {
   console.log(
-    'Finnhub fallback: not tested.\n' +
-      '  Store the key once:  echo "FINNHUB_KEY=your-key" >> .env.local\n' +
-      '  Or just this run:    FINNHUB_KEY=$(pbpaste) npm run probe:history'
+    'Finnhub: no key set. Add FINNHUB_KEY to .env.local to test one.'
   )
+}
 }
 
 }

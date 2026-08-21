@@ -202,6 +202,27 @@ export async function fetchPriceHistory({ holdings, months = 60, onProgress, fin
     let got = symbols.filter((s) => results[s] && Object.keys(results[s]).length > 0)
     let missing = symbols.filter((s) => !got.includes(s))
 
+    // One more pass for whatever came back empty.
+    //
+    // İş Yatırım hangs unpredictably: measured on 21 Aug 2026, the same symbol
+    // took 8s at a one-month window and 0.1s at thirty-six, with no pattern.
+    // A server-side retry cannot help much, since two attempts have to share
+    // one ten-second serverless budget. The client has no such ceiling, so the
+    // retry belongs here — a pause, then ask again for only what is missing.
+    if (missing.length > 0 && type !== 'global') {
+      await new Promise((r) => setTimeout(r, 1500))
+      for (const window of windows) {
+        try {
+          const retried = await fetchWindow(type, missing, window)
+          absorb(results, retried.results)
+        } catch (err) {
+          failure = err.message
+        }
+      }
+      got = symbols.filter((s) => results[s] && Object.keys(results[s]).length > 0)
+      missing = symbols.filter((s) => !got.includes(s))
+    }
+
     // Second chance for global symbols Yahoo would not serve.
     if (type === 'global' && missing.length > 0 && finnhubApiKey?.trim()) {
       for (const symbol of missing) {
