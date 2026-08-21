@@ -22,6 +22,8 @@ import {
   computeMonthlySavingsSeries,
   computeFireMetrics,
   computeDataWarnings,
+  computeCashRuns,
+  SETTLEMENT_TOLERANCE_DAYS,
   valueAtMonth,
   projectMonthsToFire,
 } from './calculations.js'
@@ -110,6 +112,92 @@ describe('computeHoldings', () => {
   })
 })
 
+describe('computeCashRuns', () => {
+  // Found in August 2026 while importing a year of real trades. The account
+  // closed the year with cash in hand and had been overdrawn for seventy days
+  // in the middle of it. The check looked only at the closing balance, so it
+  // saw nothing at all.
+
+  it('says nothing about a portfolio that stays funded', () => {
+    expect(computeCashRuns([deposit(), tx({ quantity: 10, price: 100 })], FX)).toEqual([])
+  })
+
+  it('closes a run on the day the money lands, counted in calendar days', () => {
+    // Sell a fund on Thursday, buy on Thursday, cash arrives Monday: four days
+    // short, which is T+2 across a weekend and not a missing deposit.
+    const runs = computeCashRuns(
+      [tx({ date: '2026-07-16', quantity: 100, price: 100 }), deposit({ date: '2026-07-20', price: 10000 })],
+      FX
+    )
+    expect(runs).toHaveLength(1)
+    expect(runs[0].since).toBe('2026-07-16')
+    expect(runs[0].resolvedOn).toBe('2026-07-20')
+    expect(runs[0].days).toBe(SETTLEMENT_TOLERANCE_DAYS)
+    expect(runs[0].transient).toBe(true)
+  })
+
+  it('calls a gap that outlives the settlement window a real shortfall', () => {
+    // One day longer, and no settlement cycle explains it any more.
+    const runs = computeCashRuns(
+      [tx({ date: '2026-07-16', quantity: 100, price: 100 }), deposit({ date: '2026-07-21', price: 10000 })],
+      FX
+    )
+    expect(runs[0].days).toBe(5)
+    expect(runs[0].transient).toBe(false)
+  })
+
+  it('ignores the order of transactions inside one day', () => {
+    // The buy is listed before the sell that paid for it, which is an artefact
+    // of how the rows were entered, not of what happened. Judged after every
+    // fill this invents an overdraft; judged at the close it does not.
+    const runs = computeCashRuns(
+      [
+        tx({ date: '2026-07-15', type: 'buy', quantity: 100, price: 100 }),
+        tx({ date: '2026-07-15', type: 'sell', quantity: 100, price: 120 }),
+      ],
+      FX
+    )
+    expect(runs).toEqual([])
+  })
+
+  it('reports the deepest day, not the last one', () => {
+    const runs = computeCashRuns(
+      [
+        tx({ date: '2026-07-01', quantity: 100, price: 100 }),
+        tx({ date: '2026-07-02', quantity: 100, price: 100 }),
+        tx({ date: '2026-07-03', type: 'sell', quantity: 100, price: 150 }),
+        deposit({ date: '2026-08-01', price: 10000 }),
+      ],
+      FX
+    )
+    expect(runs[0].worstDate).toBe('2026-07-02')
+    expect(runs[0].worstTRY).toBeCloseTo(-20000, 6)
+  })
+
+  it('measures a still-open run up to today, and never calls it transient', () => {
+    const runs = computeCashRuns([tx({ date: '2026-08-19', quantity: 1, price: 100 })], FX)
+    expect(runs[0].open).toBe(true)
+    expect(runs[0].resolvedOn).toBeNull()
+    // 19 Aug to 20 Aug, the faked today.
+    expect(runs[0].days).toBe(1)
+    // Short, but it is the number on the dashboard right now.
+    expect(runs[0].transient).toBe(false)
+  })
+
+  it('keeps portfolios apart', () => {
+    const runs = computeCashRuns(
+      [
+        tx({ date: '2026-07-15', quantity: 100, price: 100, portfolioId: P1 }),
+        deposit({ date: '2026-07-01', price: 10000, portfolioId: P2 }),
+        tx({ date: '2026-07-15', quantity: 10, price: 100, portfolioId: P2 }),
+      ],
+      FX
+    )
+    expect(runs).toHaveLength(1)
+    expect(runs[0].portfolioId).toBe(P1)
+  })
+})
+
 describe('computeDataWarnings', () => {
   it('flags selling more than is held', () => {
     // BUG 1.7: the position simply vanished from the holdings list, silently.
@@ -138,6 +226,34 @@ describe('computeDataWarnings', () => {
     const neg = warnings.filter((w) => w.code === 'negative_cash')
     expect(neg).toHaveLength(1)
     expect(neg[0].amountTRY).toBeCloseTo(-100000, 6)
+  })
+
+  it('stays silent about a gap that closed itself within the settlement window', () => {
+    // Money in transit is not a missing transaction. Saying so in a box titled
+    // "check your data" teaches the user to stop reading the box.
+    const warnings = computeDataWarnings(
+      [tx({ date: '2026-07-16', quantity: 100, price: 100 }), deposit({ date: '2026-07-20', price: 10000 })],
+      {},
+      FX
+    )
+    expect(warnings.filter((w) => w.code.startsWith('negative_cash'))).toHaveLength(0)
+  })
+
+  it('reports a past shortfall even though the balance is positive today', () => {
+    // The bug this replaces: only today's closing balance was checked, so a
+    // portfolio that spent months overdrawn and recovered looked spotless.
+    const warnings = computeDataWarnings(
+      [tx({ date: '2026-01-05', quantity: 100, price: 100 }), deposit({ date: '2026-03-05', price: 10000 })],
+      {},
+      FX
+    )
+    const past = warnings.filter((w) => w.code === 'negative_cash_period')
+    expect(past).toHaveLength(1)
+    expect(past[0].since).toBe('2026-01-05')
+    expect(past[0].resolvedOn).toBe('2026-03-05')
+    expect(past[0].worstTRY).toBeCloseTo(-10000, 6)
+    // And it is not confused with a shortfall that is still open.
+    expect(warnings.filter((w) => w.code === 'negative_cash')).toHaveLength(0)
   })
 
   it('does not flag negative cash when deposits cover the purchases', () => {

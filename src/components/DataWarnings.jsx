@@ -48,6 +48,21 @@ export function DataWarnings({ portfolioId = null }) {
             amount: formatCurrency(Math.abs(w.amountTRY), 'TRY', { decimals: 0 }),
           }),
         })
+      } else if (w.code === 'negative_cash_period') {
+        // Closed, but long enough that settlement cannot explain it. The
+        // balance today is fine, so the amount that matters is how deep it
+        // went, and the dates are the whole point — they tell the user where
+        // in their own history to look.
+        out.push({
+          key: `negper-${w.portfolioId}-${w.since}`,
+          text: ti(t.warnings.negativeCashPeriod, {
+            portfolio: portfolioName(w.portfolioId),
+            since: w.since,
+            until: w.resolvedOn,
+            days: w.days,
+            amount: formatCurrency(Math.abs(w.worstTRY), 'TRY', { decimals: 0 }),
+          }),
+        })
       } else if (w.code === 'oversold') {
         out.push({
           key: `over-${w.portfolioId}-${w.symbol}`,

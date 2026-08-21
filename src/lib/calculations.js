@@ -79,41 +79,148 @@ export function computeHoldings(transactions) {
 
 // === CASH ===
 
+/**
+ * What one transaction does to the TRY cash balance.
+ *
+ * Factored out because two things need it and they must never drift apart: the
+ * closing balance (computeCashByPortfolio) and the path it took to get there
+ * (computeCashRuns). A portfolio can end the year solvent and have been
+ * overdrawn for most of it; if the two disagreed about what a `sell` credits,
+ * only one of them would be wrong and there would be no way to tell which.
+ */
+function cashDeltaTRY(tx, fxRates) {
+  const withFee = convertToTRY(
+    (tx.quantity || 1) * (tx.price || 1) + (tx.fee || 0),
+    tx.currency,
+    fxRates
+  )
+  if (tx.type === 'deposit' || (tx.assetType === 'cash' && tx.type === 'buy')) {
+    return convertToTRY((tx.quantity || 1) * (tx.price || 0), tx.currency, fxRates)
+  }
+  if (tx.type === 'withdraw' || tx.type === 'buy') return -withFee
+  if (tx.type === 'sell') {
+    return convertToTRY(tx.quantity * tx.price - (tx.fee || 0), tx.currency, fxRates)
+  }
+  if (tx.type === 'exchange') {
+    // FX conversion: outflow in the source currency, inflow in the target.
+    // There is no fee term — the conversion cost is carried by the rate the
+    // user entered, so charging a fee on top would double-count it. In TRY
+    // terms the net is (toAmount in TRY) − (fromAmount in TRY), which is ~0
+    // when the entered rate matches the stored fxRates and slightly negative
+    // when the broker's rate was worse than the reference rate.
+    const out = convertToTRY(tx.quantity || 0, tx.currency, fxRates)
+    const inn = convertToTRY(Number(tx.toAmount) || 0, tx.toCurrency || 'USD', fxRates)
+    return inn - out
+  }
+  return 0
+}
+
 export function computeCashByPortfolio(transactions, fxRates) {
   const cash = new Map()
   for (const tx of transactions) {
-    const tryAmount = convertToTRY(
-      (tx.quantity || 1) * (tx.price || 1) + (tx.fee || 0),
-      tx.currency,
-      fxRates
-    )
     const portfolio = tx.portfolioId
-    const current = cash.get(portfolio) || 0
-    if (tx.type === 'deposit' || (tx.assetType === 'cash' && tx.type === 'buy')) {
-      cash.set(
-        portfolio,
-        current + convertToTRY((tx.quantity || 1) * (tx.price || 0), tx.currency, fxRates)
-      )
-    } else if (tx.type === 'withdraw') {
-      cash.set(portfolio, current - tryAmount)
-    } else if (tx.type === 'buy') {
-      cash.set(portfolio, current - tryAmount)
-    } else if (tx.type === 'sell') {
-      const inflow = convertToTRY(tx.quantity * tx.price - (tx.fee || 0), tx.currency, fxRates)
-      cash.set(portfolio, current + inflow)
-    } else if (tx.type === 'exchange') {
-      // FX conversion: outflow in the source currency, inflow in the target.
-      // There is no fee term — the conversion cost is carried by the rate the
-      // user entered, so charging a fee on top would double-count it. In TRY
-      // terms the net is (toAmount in TRY) − (fromAmount in TRY), which is ~0
-      // when the entered rate matches the stored fxRates and slightly negative
-      // when the broker's rate was worse than the reference rate.
-      const out = convertToTRY(tx.quantity || 0, tx.currency, fxRates)
-      const inn = convertToTRY(Number(tx.toAmount) || 0, tx.toCurrency || 'USD', fxRates)
-      cash.set(portfolio, current + inn - out)
-    }
+    cash.set(portfolio, (cash.get(portfolio) || 0) + cashDeltaTRY(tx, fxRates))
   }
   return cash
+}
+
+// Whole calendar days from one 'YYYY-MM-DD' to another. Built from the parts
+// via Date.UTC rather than parsing the string, so it cannot pick up a timezone
+// on the way in — see the note at the top of this file.
+function daysBetweenYmd(from, to) {
+  const [y1, m1, d1] = from.split('-').map(Number)
+  const [y2, m2, d2] = to.split('-').map(Number)
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000)
+}
+
+/**
+ * How long cash may sit below zero before it means something is missing.
+ *
+ * Turkish equities settle T+2 and TEFAS funds T+1/T+2, so money that is
+ * genuinely yours can be absent from the account for a couple of days — sell a
+ * fund on Thursday to buy on Friday and the balance is short until Monday.
+ * Four calendar days is that worst case, weekend included.
+ *
+ * Beyond it the explanation stops working: no settlement cycle runs for weeks.
+ */
+export const SETTLEMENT_TOLERANCE_DAYS = 4
+
+/**
+ * Every stretch during which a portfolio's cash closed below zero.
+ *
+ * The balance is judged at the END of each day, never after each fill. Within
+ * one day the order of two transactions is an artefact of how they were entered
+ * — a buy typed before the sell that funded it would otherwise invent an
+ * overdraft that never happened.
+ *
+ * Each run reports how long it lasted in CALENDAR days, because that is what
+ * separates the two explanations for negative cash. A settlement gap is short
+ * and closes itself. A missing deposit is not, and does not.
+ *
+ * Returns [{ portfolioId, since, resolvedOn, days, worstTRY, worstDate,
+ *            currentTRY, open, transient }], oldest first.
+ */
+export function computeCashRuns(transactions, fxRates = {}, today = todayYmd()) {
+  const byPortfolio = new Map()
+  for (const tx of transactions) {
+    const list = byPortfolio.get(tx.portfolioId) || []
+    list.push(tx)
+    byPortfolio.set(tx.portfolioId, list)
+  }
+
+  const runs = []
+
+  for (const [portfolioId, list] of byPortfolio) {
+    const sorted = [...list].sort((a, b) => (txYmd(a) < txYmd(b) ? -1 : txYmd(a) > txYmd(b) ? 1 : 0))
+    let cash = 0
+    let run = null
+
+    for (let i = 0; i < sorted.length; i++) {
+      cash += cashDeltaTRY(sorted[i], fxRates)
+      const day = txYmd(sorted[i])
+      const dayEnds = i === sorted.length - 1 || txYmd(sorted[i + 1]) !== day
+      if (!dayEnds) continue
+
+      if (cash < -0.01) {
+        if (!run) run = { portfolioId, since: day, worstTRY: cash, worstDate: day }
+        if (cash < run.worstTRY) {
+          run.worstTRY = cash
+          run.worstDate = day
+        }
+      } else if (run) {
+        // The day cash came back is the day the gap closed, so the span
+        // includes it: sell Thursday, settle Monday, four days.
+        runs.push(finishRun(run, day, cash, false, today))
+        run = null
+      }
+    }
+
+    // Still short at the last transaction, which means still short now.
+    if (run) runs.push(finishRun(run, null, cash, true, today))
+  }
+
+  return runs.sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
+}
+
+function finishRun(run, resolvedOn, currentTRY, open, today) {
+  const until = resolvedOn || today
+  const days = Math.max(1, daysBetweenYmd(run.since, until))
+  return {
+    ...run,
+    resolvedOn,
+    open,
+    days,
+    currentTRY,
+    // A gap that closed itself within the settlement window is the plumbing
+    // working as designed, and worth no one's attention.
+    //
+    // An open run is never transient, however short. It has not demonstrated
+    // that it closes — and more to the point, its balance is the negative
+    // number sitting on the dashboard right now. Displaying a figure while
+    // staying silent about it is precisely the failure this box exists to
+    // prevent.
+    transient: !open && days <= SETTLEMENT_TOLERANCE_DAYS,
+  }
 }
 
 // Same logic as computeCashByPortfolio but tracks cash separately per currency.
@@ -230,10 +337,37 @@ export function computePortfolioSummary(transactions, priceCache, fxRates, portf
 export function computeDataWarnings(transactions, priceCache = {}, fxRates = {}) {
   const warnings = []
 
-  // 1. A sub-portfolio whose cash balance went below zero. Almost always a
-  //    missing deposit rather than actual margin debt.
-  for (const [portfolioId, amountTRY] of computeCashByPortfolio(transactions, fxRates)) {
-    if (amountTRY < -0.01) warnings.push({ code: 'negative_cash', portfolioId, amountTRY })
+  // 1. A sub-portfolio whose cash went below zero.
+  //
+  //    Two different things produce this and they deserve different answers.
+  //    Selling a fund on Monday to buy shares on Tuesday leaves the account
+  //    short until the sale settles: nothing is missing, the money is simply in
+  //    transit, and the gap closes on its own within days. A deposit that was
+  //    never recorded produces a shortfall that closes only when the next
+  //    unrelated deposit happens to cover it — or never.
+  //
+  //    Short self-closing gaps are therefore reported as nothing at all.
+  //    Silence is the verdict: this box means something is wrong, and saying
+  //    "your settlement worked correctly" in a box titled 'Check your data'
+  //    teaches the user to stop reading it.
+  //
+  //    Checking only TODAY's balance, which is what this used to do, misses the
+  //    case entirely: a portfolio can be overdrawn for seventy days and close
+  //    the year in the black. So the whole path is walked, not the endpoint.
+  for (const run of computeCashRuns(transactions, fxRates)) {
+    if (run.transient) continue
+    warnings.push({
+      code: run.open ? 'negative_cash' : 'negative_cash_period',
+      portfolioId: run.portfolioId,
+      // For an open run this is today's balance, which is what the old
+      // single-number check reported and what the user can act on.
+      amountTRY: run.open ? run.currentTRY : run.worstTRY,
+      since: run.since,
+      resolvedOn: run.resolvedOn,
+      days: run.days,
+      worstTRY: run.worstTRY,
+      worstDate: run.worstDate,
+    })
   }
 
   // 2. Selling more units than were ever held. The position silently
