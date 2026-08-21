@@ -558,6 +558,18 @@ function PriceStatusBar() {
 
   const { fetchedAt, lastError, lastErrorSymbols, sourceStats } = priceMeta
 
+  // Older stored state holds bare strings; newer holds { symbol, error }.
+  const priceFailureReasons = useMemo(() => {
+    const byReason = new Map()
+    for (const entry of lastErrorSymbols || []) {
+      if (!entry?.error) continue
+      const list = byReason.get(entry.error) || []
+      list.push(entry.symbol)
+      byReason.set(entry.error, list)
+    }
+    return [...byReason.entries()].map(([reason, syms]) => `${reason} (${syms.join(', ')})`)
+  }, [lastErrorSymbols])
+
   // Determine top-line state
   let icon, iconColor, statusText, secondaryText
 
@@ -627,8 +639,19 @@ function PriceStatusBar() {
       )}
 
       {lastErrorSymbols && lastErrorSymbols.length > 0 && (
-        <div className="text-2xs text-warning px-1">
-          {ti(t.settingsPage.somePricesFailed, { symbols: lastErrorSymbols.join(', ') })}
+        <div className="space-y-0.5 px-1">
+          <div className="text-2xs text-warning">
+            {ti(t.settingsPage.somePricesFailed, {
+              symbols: lastErrorSymbols.map((e) => e.symbol ?? e).join(', '),
+            })}
+          </div>
+          {/* Grouped by message: a shared cause should read as one line, not
+              as one problem per ticker. */}
+          {priceFailureReasons.length > 0 && (
+            <div className="text-2xs text-text-tertiary">
+              {ti(t.settingsPage.priceFailureReason, { reasons: priceFailureReasons.join(' · ') })}
+            </div>
+          )}
         </div>
       )}
     </div>

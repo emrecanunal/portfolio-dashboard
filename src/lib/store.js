@@ -56,7 +56,7 @@ const defaultSettings = {
   priceMeta: {
     fetchedAt: null,           // last successful refresh timestamp
     lastError: null,
-    lastErrorSymbols: [],      // symbols that failed in the last batch
+    lastErrorSymbols: [],      // [{ symbol, error }] from the last batch
   },
 }
 
@@ -277,7 +277,11 @@ export const usePortfolioStore = create(
                 ...s.settings.priceMeta,
                 fetchedAt: Date.now(),
                 lastError: topLevelError,
-                lastErrorSymbols: errors.map((e) => e.symbol),
+                // Keep the reason alongside the name. Five failed tickers with
+                // one shared cause is one problem; five names on their own look
+                // like five, and point the search at the symbols rather than at
+                // whatever they have in common.
+                lastErrorSymbols: errors.filter((e) => e.symbol),
                 // Merge rather than replace: a fund-only tick shouldn't wipe
                 // the equity sources' stats out of the Settings panel.
                 sourceStats: { ...s.settings.priceMeta?.sourceStats, ...sourceStats },
