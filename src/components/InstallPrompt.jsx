@@ -115,7 +115,7 @@ export function InstallPrompt() {
 
 function Banner({ children, title, onDismiss }) {
   return (
-    <div className="fixed bottom-4 right-4 z-50 max-w-xs animate-in fade-in slide-in-from-bottom-2 duration-300">
+    <div className="fixed bottom-20 right-4 md:bottom-4 z-50 max-w-xs animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="bg-bg-elevated border border-border-default rounded-xl shadow-xl p-4 relative">
         <button
           onClick={onDismiss}
