@@ -51,6 +51,11 @@ const defaultSettings = {
     fxMonths: 0,
     errors: [],
   },
+  // When a backup file was last written. Describes the MOMENT, not the user,
+  // so it is deliberately absent from RESTORABLE_SETTINGS: restoring a file
+  // from March would otherwise claim you had backed up in March — the one lie
+  // this field exists to prevent.
+  lastBackupAt: null,
   // Equity-price live-data metadata
   finnhubApiKey: '',           // user-provided; empty = manual prices only
   priceMeta: {
@@ -110,6 +115,12 @@ export const usePortfolioStore = create(
 
       setTheme: (theme) =>
         set((s) => ({ settings: { ...s.settings, theme } })),
+
+      // Called wherever a backup file actually reaches the disk — including the
+      // safety copies taken before a destructive action, which are real backups
+      // whether or not the user thought of them as such.
+      markBackedUp: (at = new Date().toISOString()) =>
+        set((s) => ({ settings: { ...s.settings, lastBackupAt: at } })),
 
       toggleTheme: () =>
         set((s) => ({
@@ -439,6 +450,11 @@ export const usePortfolioStore = create(
             fxMeta: s.settings.fxMeta,
             priceMeta: s.settings.priceMeta,
             finnhubApiKey: s.settings.finnhubApiKey,
+            // Restoring a file written in March must not claim you backed up
+            // in March. RESTORABLE_SETTINGS already excludes this, but the
+            // invariant is worth stating where the merge happens, so adding
+            // the key to that list later cannot quietly break it.
+            lastBackupAt: s.settings.lastBackupAt,
           },
         })),
     }),

@@ -38,6 +38,7 @@ import { PerformanceLine } from '../components/charts/PerformanceLine.jsx'
 import { FireProgressCard } from '../components/charts/FireProgressCard.jsx'
 import { AddTransactionModal } from '../components/modals/AddTransactionModal.jsx'
 import { StaleRatesBanner } from '../components/StaleRatesBanner.jsx'
+import { StaleBackupBanner } from '../components/StaleBackupBanner.jsx'
 import { DataWarnings } from '../components/DataWarnings.jsx'
 
 export function PortfolioView({ scope = { type: 'master' } }) {
@@ -157,6 +158,7 @@ export function PortfolioView({ scope = { type: 'master' } }) {
   return (
     <div className="space-y-6">
       <StaleRatesBanner />
+      <StaleBackupBanner />
       <DataWarnings portfolioId={portfolioId} />
       {/* === HEADER === */}
       <div className="flex items-end justify-between flex-wrap gap-4">

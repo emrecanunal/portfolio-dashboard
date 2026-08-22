@@ -150,6 +150,7 @@ describe('parseJsonBackup: which settings come back', () => {
     fxMeta: { fetchedAt: 1714560000000, source: 'frankfurter' },
     priceMeta: { fetchedAt: 1714560000000 },
     finnhubApiKey: 'should-never-come-back',
+    lastBackupAt: '2026-03-01T00:00:00.000Z',
   }
 
   it('restores the settings that describe the user', () => {
@@ -169,6 +170,15 @@ describe('parseJsonBackup: which settings come back', () => {
   it('never restores an API key, even if the file carries one', () => {
     const r = parseJsonBackup(backup({ settings }))
     expect(r.data.settings.finnhubApiKey).toBeUndefined()
+  })
+
+  it('never restores when the last backup was taken', () => {
+    // The file was written in March. Letting that through would tell a user
+    // restoring it today that their data was backed up five months ago — and
+    // the whole point of the field is to say when it was LAST written to disk,
+    // which is right now, not then.
+    const r = parseJsonBackup(backup({ settings }))
+    expect(r.data.settings.lastBackupAt).toBeUndefined()
   })
 
   it('keeps the allowlist and the restored keys in step', () => {

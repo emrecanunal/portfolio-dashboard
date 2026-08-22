@@ -1,11 +1,12 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
-import { Plus, Pencil, Trash2, RotateCcw, Eraser, Check, X as XIcon, RefreshCw, AlertCircle, CheckCircle2, Download, Upload, FileText, FileJson } from 'lucide-react'
+import { Plus, Pencil, Trash2, RotateCcw, Eraser, Check, X as XIcon, RefreshCw, AlertCircle, CheckCircle2, Download, Upload, FileText, FileJson, ShieldCheck, ShieldAlert, Smartphone } from 'lucide-react'
 import { usePortfolioStore } from '../lib/store.js'
 import { useT } from '../i18n/useT.js'
 import { formatRelativeTime, isStale, isVeryStale } from '../lib/fxApi.js'
 import { historyCoverage } from '../lib/history.js'
 import { computeHoldings } from '../lib/calculations.js'
 import { exportJsonBackup, parseJsonBackup, exportTransactionsCsv } from '../lib/dataExport.js'
+import { persistenceStatus, isInstalled, daysSince, backupIsStale } from '../lib/persistence.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
 import { Modal } from '../components/ui/Modal.jsx'
@@ -27,6 +28,7 @@ export default function SettingsPage() {
   const deleteSubPortfolio = usePortfolioStore((s) => s.deleteSubPortfolio)
   const resetToDefaults = usePortfolioStore((s) => s.resetToDefaults)
   const clearAllTransactions = usePortfolioStore((s) => s.clearAllTransactions)
+  const markBackedUp = usePortfolioStore((s) => s.markBackedUp)
   // Needed by the safety backup below, which writes the WHOLE state, not just
   // the transactions: a restore that came back without the month-end archives
   // would silently drop months that cost API calls against a 25-a-day quota.
@@ -109,8 +111,10 @@ export default function SettingsPage() {
   // transactions and nothing on this machine remembers what was there. The
   // data lives in this browser's localStorage and nowhere else: there is no
   // server copy, no other device, no undo.
-  const downloadSafetyBackup = () =>
+  const downloadSafetyBackup = () => {
     exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
+    markBackedUp()
+  }
 
   const backupThen = (action) => () => {
     downloadSafetyBackup()
@@ -1218,6 +1222,7 @@ function ExportBackupActions() {
   const fxHistory = usePortfolioStore((s) => s.fxHistory)
   const settings = usePortfolioStore((s) => s.settings)
   const restoreFromBackup = usePortfolioStore((s) => s.restoreFromBackup)
+  const markBackedUp = usePortfolioStore((s) => s.markBackedUp)
 
   const fileInputRef = useRef(null)
   const [restoreConfirm, setRestoreConfirm] = useState(null) // { data, summary } or null
@@ -1226,6 +1231,7 @@ function ExportBackupActions() {
 
   const handleExportJson = () => {
     exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
+    markBackedUp()
   }
 
   const handleExportCsv = () => {
@@ -1260,6 +1266,7 @@ function ExportBackupActions() {
     // undo, so the one thing that must not depend on the user having thought
     // ahead is being able to get back.
     exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
+    markBackedUp()
     restoreFromBackup(restoreConfirm.data)
     setSuccessMessage(
       ti(t.settingsPage.restoreSuccess, {
@@ -1273,6 +1280,8 @@ function ExportBackupActions() {
 
   return (
     <div className="space-y-2">
+      <DurabilityStatus lastBackupAt={settings.lastBackupAt} t={t} ti={ti} />
+
       <ExportAction
         icon={FileJson}
         title={t.settingsPage.exportJson}
@@ -1343,6 +1352,84 @@ function ExportBackupActions() {
         cancelLabel={t.common.cancel}
         variant="danger"
       />
+    </div>
+  )
+}
+
+// What is actually protecting the data, stated rather than implied.
+//
+// Three separate facts, and none of them substitutes for the others: eviction
+// protection is the browser promising not to clear this origin on its own, an
+// installed app is exempt from Safari's seven-day rule, and a backup file is
+// the only one of the three that survives the browser being replaced. Showing
+// them together is the point — two green lines and one red one is a portfolio
+// that is one cleared cache away from gone.
+function DurabilityStatus({ lastBackupAt, t, ti }) {
+  const [persisted, setPersisted] = useState(null)
+  const installed = isInstalled()
+
+  useEffect(() => {
+    let alive = true
+    persistenceStatus().then((r) => alive && setPersisted(r))
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const days = daysSince(lastBackupAt)
+  const stale = backupIsStale(lastBackupAt)
+
+  const backupText =
+    days === null
+      ? t.settingsPage.backupNever
+      : days === 0
+        ? t.settingsPage.backupToday
+        : ti(t.settingsPage.backupDaysAgo, { n: days })
+
+  const rows = [
+    {
+      key: 'backup',
+      ok: !stale,
+      icon: stale ? ShieldAlert : ShieldCheck,
+      text: backupText,
+    },
+    {
+      key: 'install',
+      ok: installed,
+      icon: Smartphone,
+      text: installed ? t.settingsPage.durabilityInstalled : t.settingsPage.durabilityNotInstalled,
+    },
+    // Only worth a line where the browser implements it. Safari does not, and
+    // a permanent "unsupported" row teaches people to ignore the whole panel.
+    ...(persisted?.supported
+      ? [
+          {
+            key: 'persist',
+            ok: persisted.persisted,
+            icon: persisted.persisted ? ShieldCheck : ShieldAlert,
+            text: persisted.persisted
+              ? t.settingsPage.durabilityPersisted
+              : t.settingsPage.durabilityNotPersisted,
+          },
+        ]
+      : []),
+  ]
+
+  return (
+    <div className="rounded-lg border border-border-subtle bg-bg-tertiary/40 p-3 space-y-1.5">
+      <div className="text-2xs uppercase tracking-wider text-text-tertiary font-medium">
+        {t.settingsPage.durabilityTitle}
+      </div>
+      {rows.map((r) => (
+        <div key={r.key} className="flex items-start gap-2 text-2xs leading-relaxed">
+          <r.icon
+            size={12}
+            strokeWidth={2}
+            className={cn('shrink-0 mt-0.5', r.ok ? 'text-success' : 'text-warning')}
+          />
+          <span className={r.ok ? 'text-text-secondary' : 'text-text-primary'}>{r.text}</span>
+        </div>
+      ))}
     </div>
   )
 }
