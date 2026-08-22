@@ -20,7 +20,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Portfolio" />
-    <link rel="apple-touch-icon" href="/icon-192.svg" />
+    <!-- PNG, not SVG: Safari ignores an SVG apple-touch-icon outright, and
+         "Add to Home Screen" then falls back to a screenshot of the page.
+         180x180 is what current iPhones ask for. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

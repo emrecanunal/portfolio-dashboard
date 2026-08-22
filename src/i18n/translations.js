@@ -11,10 +11,10 @@ export const translations = {
     },
     installPrompt: {
       desktopTitle: 'Install as app',
-      desktopHint: 'Open the dashboard like a native app — one click, no terminal.',
+      desktopHint: 'Opens in its own window, without the browser wrapped around it.',
       installBtn: 'Install',
       iosTitle: 'Add to Home Screen',
-      iosHint: 'Tap the Share button in Safari, then "Add to Home Screen" to install.',
+      iosHint: 'Safari erases a site\'s stored data after seven days without a visit, and your portfolio lives in this browser. An installed app is exempt. Tap Share, then "Add to Home Screen".',
     },
     common: {
       add: 'Add',
@@ -367,10 +367,10 @@ export const translations = {
     },
     installPrompt: {
       desktopTitle: 'Uygulama olarak yükle',
-      desktopHint: 'Paneli yerel uygulama gibi aç — tek tıkla, terminal yok.',
+      desktopHint: 'Tarayıcı çerçevesi olmadan, kendi penceresinde açılır.',
       installBtn: 'Yükle',
       iosTitle: 'Ana Ekrana Ekle',
-      iosHint: "Safari'de Paylaş düğmesine dokunup \"Ana Ekrana Ekle\"yi seç.",
+      iosHint: "Safari, yedi gün ziyaret edilmeyen bir sitenin verisini siler — portföyün de bu tarayıcıda duruyor. Ana ekrana eklenmiş uygulama bu kuralın dışında. Paylaş → \"Ana Ekrana Ekle\".",
     },
     common: {
       add: 'Ekle',
