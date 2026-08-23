@@ -26,7 +26,7 @@ export default function SettingsPage() {
   const addSubPortfolio = usePortfolioStore((s) => s.addSubPortfolio)
   const renameSubPortfolio = usePortfolioStore((s) => s.renameSubPortfolio)
   const deleteSubPortfolio = usePortfolioStore((s) => s.deleteSubPortfolio)
-  const resetToDefaults = usePortfolioStore((s) => s.resetToDefaults)
+  const loadDemoData = usePortfolioStore((s) => s.loadDemoData)
   const clearAllTransactions = usePortfolioStore((s) => s.clearAllTransactions)
   const markBackedUp = usePortfolioStore((s) => s.markBackedUp)
   // Needed by the safety backup below, which writes the WHOLE state, not just
@@ -428,7 +428,7 @@ export default function SettingsPage() {
       <ConfirmDialog
         open={resetConfirmOpen}
         onClose={() => setResetConfirmOpen(false)}
-        onConfirm={backupThen(resetToDefaults)}
+        onConfirm={backupThen(loadDemoData)}
         title={t.settingsPage.resetDemo}
         message={ti(t.settingsPage.resetDemoConfirm, {
           n: transactions.length,

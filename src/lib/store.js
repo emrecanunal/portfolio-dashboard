@@ -65,12 +65,33 @@ const defaultSettings = {
   },
 }
 
+// What a browser that has never seen this app starts with.
+//
+// WHY NOT THE DEMO DATA, WHICH IS WHAT THIS USED TO BE
+//
+// The demo set is deliberately realistic — THYAO, ASELS, VOO, believable
+// quantities — which is exactly what makes it dangerous as a starting point.
+// Someone who opens the app and starts logging real trades ends up with a book
+// that is part real and part invented, and nothing on screen says which row is
+// which. That was survivable while the data lived in one browser.
+//
+// It stops being survivable the moment two devices sync. A phone opening the
+// app for the first time would boot full of demo transactions and push them at
+// the server as though they were real, and a merge has no way to tell them
+// from the trades typed on the laptop. So first run is empty now, and the demo
+// set moved behind a button (loadDemoData, Settings → Data management).
+//
+// One portfolio rather than none: the add-transaction form files a trade under
+// subPortfolios[0], so zero portfolios means a trade filed under '' — an
+// invisible orphan. One empty portfolio costs nothing and closes that.
+const STARTER_PORTFOLIO = { id: 'sub-default', name: 'Portfolio', color: '#10b981' }
+
 export const usePortfolioStore = create(
   persist(
     (set, get) => ({
-      transactions: demoTransactions,
-      subPortfolios: demoSubPortfolios,
-      priceCache: demoPriceCache,
+      transactions: [],
+      subPortfolios: [STARTER_PORTFOLIO],
+      priceCache: {},
       // Month-end archives behind the performance chart. See history.js for
       // the shape and why they are monthly rather than daily.
       priceHistory: {},
@@ -127,15 +148,23 @@ export const usePortfolioStore = create(
           settings: { ...s.settings, theme: s.settings.theme === 'dark' ? 'light' : 'dark' },
         })),
 
-      resetToDefaults: () =>
-        set({
+      // Replace everything with the sample book. Named for what it does rather
+      // than "resetToDefaults", which stopped being true when the defaults
+      // became empty — a reader of that name would reasonably expect this to
+      // clear the app, and it does the opposite.
+      //
+      // Settings are deliberately NOT reset with it: the FIRE targets, base
+      // currency and Finnhub key belong to the person, not to the sample data,
+      // and re-entering them is a strange price for pressing "show me a demo".
+      loadDemoData: () =>
+        set((s) => ({
           transactions: demoTransactions,
           subPortfolios: demoSubPortfolios,
           priceCache: demoPriceCache,
           priceHistory: {},
           fxHistory: {},
-          settings: defaultSettings,
-        }),
+          settings: s.settings,
+        })),
 
       clearAllTransactions: () =>
         set((s) => ({
