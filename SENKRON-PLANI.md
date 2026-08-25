@@ -213,7 +213,7 @@ lint kontrolü de eklenecek.
 > işlemlerle boot edip onları gerçekmiş gibi sunucuya iterdi ve hiçbir birleştirme
 > mantığı bunları laptopta girilen gerçek işlemlerden ayıramazdı.
 
-### Faz 1 — Backend iskeleti
+### Faz 1 — Backend iskeleti ✅ (tamamlandı, 25 Ağustos 2026)
 
 | Kim | Ne |
 |---|---|
@@ -225,6 +225,23 @@ lint kontrolü de eklenecek.
 | Ben | ✅ RLS test paketi (`supabase/test/`) — 8 test, lokal Postgres'te geçiyor |
 | Ben | `src/lib/backend/` dikişi, `AuthGate`, magic link giriş ekranı |
 | Ben | `portfolio-private-import.json` → Supabase migration script'i (364 işlem) |
+
+> **Faz 1'de öğrenilenler.**
+>
+> **Supabase, `public` şemasındaki her tabloya `anon` için de yetki veriyor.**
+> Şema "anon hiçbir şey almıyor" diye yazıyordu; yanlıştı. Anonim bir yazma
+> denemesinin `permission denied` yerine `row-level security` ile reddedilmesi
+> ele verdi — ikisi de isteği durduruyor ama biri yetki katmanında, diğeri tek
+> başına politikada. Şema artık dokuz tablonun hepsinde `revoke ... from anon`
+> yapıyor. **Yeni tablo eklerken o listeye de eklemeyi unutma.**
+>
+> **Bir testin geçmesi, ölçtüğünü sandığın şeyi ölçtüğü anlamına gelmiyor.**
+> `prices_latest` için "anonim okuma kapalı" testi boş dizi dönünce geçiyordu —
+> ama tablo zaten boş, herkese açık bir boş tablo da aynı cevabı verir. Kontrol
+> script'i artık reddin *derecesini* ayırt ediyor; boş sonuç `ZAYIF` sayılıyor.
+>
+> **Node 22 zorunlu oldu.** `supabase-js` `engines: node >=22` diyor ve Vercel
+> Node 20 çalışma zamanını 1 Ekim 2026'da kaldırıyor.
 
 ### Faz 2 — Senkron katmanı
 
