@@ -58,90 +58,74 @@ istemci kendi veritabanından okur.
 
 ## 2. Şema
 
-```sql
--- auth.users → Supabase yönetir
+**Kaynak: [`supabase/schema.sql`](supabase/schema.sql).** Çalışan sürüm orada;
+burada yalnızca *neden öyle* yazıldığı var. Şema değişirse o dosya değişir, bu
+bölüm değil.
 
-create table profiles (
-  user_id     uuid primary key references auth.users on delete cascade,
-  display_name text,
-  created_at  timestamptz not null default now()
-);
+Kurulum: Supabase → SQL Editor → New query → dosyanın tamamını yapıştır → Run.
+Dosya yeniden çalıştırılabilir, ikinci kez koşturmak veriyi bozmaz.
 
-create table portfolios (
-  id          uuid primary key,              -- istemci üretir
-  user_id     uuid not null references auth.users on delete cascade,
-  name        text not null,
-  color       text not null,
-  sort_order  int  not null default 0,
-  updated_at  timestamptz not null default now(),
-  deleted_at  timestamptz
-);
+### Şemayı belirleyen dört karar
 
-create table transactions (
-  id            uuid primary key,            -- istemci üretir (crypto.randomUUID)
-  user_id       uuid not null references auth.users on delete cascade,
-  portfolio_id  uuid not null,
-  type          text not null,               -- buy | sell | deposit | withdraw | fx
-  symbol        text,
-  asset_class   text,                        -- bist | tefas | global | cash
-  quantity      numeric,
-  price         numeric,
-  currency      text not null,
-  commission    numeric not null default 0,
-  trade_date    date not null,               -- 'YYYY-MM-DD', saat/dilim YOK
-  notes         text,
-  updated_at    timestamptz not null default now(),
-  deleted_at    timestamptz
-);
-create index on transactions (user_id, updated_at);
+**Birincil anahtar `(user_id, id)`, tek başına `id` değil.** Bunu gerçek veriyi
+okuyunca değiştirdim: 364 işlemin **349'unun id'si UUID değil** — Investing.com
+içe aktarması `inv-233`, fon dönüştürücü `fund-1` yazmış. Deterministik olmaları
+iyi bir şey (aynı dosyayı iki kez aktarmak kayıtları ikizlemiyor) ama global
+benzersizlik garantisi yok: ikinci kullanıcı da kendi dosyasını aktardığında onun
+da bir `inv-233`'ü olur. Bileşik anahtar herkese kendi ad alanını veriyor.
 
-create table user_settings (
-  user_id     uuid primary key references auth.users on delete cascade,
-  settings    jsonb not null default '{}',   -- izin listesi, bkz. RESTORABLE_SETTINGS
-  updated_at  timestamptz not null default now()
-);
+**`trade_date` `date` tipinde, `timestamptz` değil.** `test:tz`'nin kovaladığı
+hata tam buradan çıkmıştı: işlem tarihi saat ve saat dilimi taşımıyor, taşırsa
+Türkiye'de üç saatlik kayma ve ayın son günündeki işlemlerin grafikten düşmesi
+geri gelir.
 
--- Kullanıcıdan bağımsız, herkesin okuduğu, sadece cron'un yazdığı:
-create table instruments   (symbol text primary key, asset_class text, currency text, source text);
-create table prices_latest (symbol text primary key, price numeric, currency text, fetched_at timestamptz);
-create table prices_monthly(symbol text, month text, close numeric, primary key (symbol, month));
-create table fx_latest     (base text, quote text, rate numeric, fetched_at timestamptz, primary key (base, quote));
-create table fx_monthly    (base text, quote text, month text, rate numeric, primary key (base, quote, month));
-```
+**`deleted_at` mezar taşı.** Satır fiziksel silinirse silme bilgisi
+senkronlanamaz ve kayıt diğer cihazdan geri dirilir. 90 günden eskiler
+`purge_tombstones()` ile temizlenir.
 
-**`trade_date` `date` tipinde, `timestamptz` değil.** `test:tz`'nin yakaladığı hata
-tam buradan çıkmıştı: işlem tarihi saat ve saat dilimi taşımıyor, taşırsa Türkiye'de
-üç saatlik kayma ve ayın son günündeki işlemlerin grafikten düşmesi geri gelir.
+**`updated_at`'i trigger ile sunucu yazar**, istemci değil. Senkron imleci bu
+kolona bakıyor; saati beş dakika geri olan bir telefonun yazdığı satır imlecin
+gerisinde kalır ve diğer cihaz onu hiç görmez.
 
-**`deleted_at` mezar taşı şart.** Satır fiziksel olarak silinirse, silme bilgisi
-senkronlanamaz ve silinen işlem diğer cihazdan geri dirilir. 90 günden eski
-mezar taşları periyodik temizlenir.
+### Uygulama ↔ veritabanı alan eşlemesi
 
-**`updated_at` trigger ile sunucuda yazılır**, istemci saatiyle değil. İki
-cihazın saati birbirini tutmayabilir ve senkron imleci buna bağlı.
+SQL tarafı snake_case ve tip adlarıyla çakışmayan isimler kullanıyor. Çeviri tek
+yerde, `src/lib/backend/` dikişinde:
+
+| Uygulama | Veritabanı |
+|---|---|
+| `assetType` | `asset_type` |
+| `portfolioId` | `portfolio_id` |
+| `date` | `trade_date` |
 
 ### RLS politikaları
 
-```sql
-alter table transactions enable row level security;
+`using` ne okuyabileceğimi, `with check` ne yazabileceğimi söyler ve **ikisi de
+gerekir**. Yalnızca `using` yazmak — en sık yapılan RLS hatası — okumayı kapatıp
+yazmayı açık bırakır: kullanıcı başkasının `user_id`'siyle satır ekleyebilir,
+sonra da onu göremediği için ne yaptığını fark etmez.
 
-create policy "own rows" on transactions
-  for all
-  using      (auth.uid() = user_id)      -- ne okuyabilirim
-  with check (auth.uid() = user_id);     -- ne yazabilirim
+Paylaşılan fiyat tablolarında tersi kurgu: `select` politikası var, yazma
+politikası **hiç tanımlanmıyor**. RLS açıkken politikası olmayan işlem yasaktır;
+cron `service_role` ile bağlandığı için RLS'i baypas edip yazar.
+
+**Bu politikalar test edildi.** RLS yanlış yazıldığında hata vermez, sessizce boş
+sonuç döner — yani ancak iki sahte kullanıcıyla birbirinin satırlarını okumayı
+*ve yazmayı* deneyen bir test paketi bunu yakalar. `supabase/test/rls_test.sql`
+sekiz şeyi sınıyor: yeni kullanıcıya portföy açılması, kendi satırını yazabilme,
+başkasınınkini görememe, **aynı `inv-233` id'sinin iki kullanıcıda çakışmaması**,
+başkasının `user_id`'siyle yazmanın reddedilmesi, fiyat tablolarının okunabilip
+yazılamaması ve `updated_at`'in istemci değerini ezmesi.
+
+Supabase projesi açmadan koşar (`supabase/test/prelude.sql` eksik parçaları
+taklit eder):
+
+```bash
+createdb rlstest
+psql -d rlstest -v ON_ERROR_STOP=1 -f supabase/test/prelude.sql
+psql -d rlstest -v ON_ERROR_STOP=1 -f supabase/schema.sql
+psql -d rlstest -v ON_ERROR_STOP=1 -f supabase/test/rls_test.sql
 ```
-
-**`with check` olmadan yazma tarafı açık kalır** — kullanıcı başkasının
-`user_id`'siyle satır ekleyebilir. Klasik RLS hatası; her tabloda ikisi birden
-olmalı. Aynı politika `portfolios`, `profiles`, `user_settings` için tekrarlanır.
-
-Paylaşılan tablolar tersi: `for select using (true)`, yazma yalnızca
-`service_role` (yani cron) tarafından.
-
-**Bu politikalar test edilecek.** İki sahte kullanıcı yaratıp A'nın oturumuyla
-B'nin satırlarını okumayı ve yazmayı deneyen bir test paketi — RLS'in kendisi
-sessizce boş sonuç döndürdüğü için, yanlış yazılmış bir politika ancak böyle
-fark edilir.
 
 ---
 
@@ -153,7 +137,24 @@ dönüşür; uygulama uçakta da açılır, internet gelince kendini toparlar.
 **Çekme (pull).** `select * from transactions where updated_at > :cursor`.
 RLS zaten kullanıcıya daraltıyor, `where user_id` yazmaya gerek yok — ve
 yazmamak, unutulduğunda açık bırakan bir alışkanlığı hiç edinmemek demek.
-İmleç, görülen en büyük `updated_at`.
+
+**İmleç ham `max(updated_at)` OLAMAZ, birkaç saniye geriden sorulmalı.** Bunu
+şemayı lokal Postgres'te sınarken fark ettim ve sessizce veri kaybettirecek
+cinsten:
+
+> A işlemi T1'de başlar. B işlemi T2'de (T2 > T1) başlar, işini bitirir ve önce
+> commit eder. İstemci o sırada çeker, imleci T2'ye taşır. **Sonra** A commit
+> eder — ama satırları T1 damgalı, yani imlecin gerisinde. O satırlar bir daha
+> hiçbir çekmeye yakalanmaz.
+
+Damga *yazma* anında konuyor, satır ise *commit* anında görünür oluyor; ikisinin
+sırası aynı olmak zorunda değil. Çözüm ucuz: imleci `max(updated_at) - 30 sn`
+olarak sakla ve aynı satırları tekrar çek. Birleştirme `id` üzerinden idempotent
+olduğu için tekrar gelen satır zarar vermiyor, sadece birkaç satır fazla trafik.
+
+(Kusursuz çözüm imleci zaman yerine commit sırasına bağlamak olurdu — Postgres
+tarafında `xmin` ya da mantıksal çoğaltma. Bu ürünün ölçeğinde ödediği bedele
+değmez; 30 saniyelik pencere yeterli.)
 
 **Gönderme (push).** Yerelde kirli işaretlenmiş satırlar `upsert` edilir.
 `id` istemcide üretildiği için işlem idempotent: aynı satırı iki kez göndermek
@@ -217,9 +218,11 @@ lint kontrolü de eklenecek.
 | Kim | Ne |
 |---|---|
 | **Sen** | supabase.com'da proje aç, bölge **eu-central-1 (Frankfurt)** |
+| **Sen** | `supabase/schema.sql`'i SQL Editor'e yapıştır → Run |
 | **Sen** | Proje URL'i + **anon key**'i bana ver (bunlar gizli değil, istemciye gömülür) |
 | **Sen** | **service_role key'i bana verme** — doğrudan Vercel env'e koy |
-| Ben | Şema SQL'i + RLS politikaları + RLS testleri |
+| Ben | ✅ Şema SQL'i + RLS politikaları (`supabase/schema.sql`) |
+| Ben | ✅ RLS test paketi (`supabase/test/`) — 8 test, lokal Postgres'te geçiyor |
 | Ben | `src/lib/backend/` dikişi, `AuthGate`, magic link giriş ekranı |
 | Ben | `portfolio-private-import.json` → Supabase migration script'i (364 işlem) |
 
@@ -230,9 +233,31 @@ lint kontrolü de eklenecek.
 
 ### Faz 3 — Fiyat katmanı sunucuya
 
-`prices_latest` + Vercel Cron (piyasa açıkken 5 dk, TEFAS akşam bir kez).
-Finnhub ve Alpha Vantage anahtarları env'e; tarayıcıdan tamamen çıkar.
-`src/lib/priceApi.js` artık dış kaynağa değil kendi veritabanımıza bakar.
+`prices_latest` doldurulur, Finnhub ve Alpha Vantage anahtarları env'e taşınır,
+`src/lib/priceApi.js` dış kaynağa değil kendi veritabanımıza bakar. Tarayıcıda
+API anahtarı diye bir şey kalmaz.
+
+**Zamanlayıcı Vercel Cron DEĞİL.** Bu planın ilk halinde öyle yazıyordu, sonra
+doğruladım: **Vercel'in ücretsiz (Hobby) planında cron günde yalnızca bir kez
+çalışabilir** ve daha sık bir ifade deploy sırasında hata verir; üstelik tetikleme
+zamanı da ±59 dakika şaşabilir. "Piyasa açıkken 5 dakikada bir" oradan çıkmıyor.
+
+Yerine **Supabase Cron (`pg_cron`)** — zamanlama doğrudan Postgres'in içinde,
+dakikalık çözünürlükte, `pg_net` ile HTTP çağrısı yapabiliyor. Belgelerde plana
+bağlı bir kısıt geçmiyor; Faz 3'e geldiğimizde ücretsiz katmanda bizzat
+doğrulanacak. Çıkmazsa yedek seçenek GitHub Actions (`schedule:`, 5 dakikalık
+asgari aralık, özel depoda ayda 2000 dakika ücretsiz).
+
+Bunun ikinci bir faydası var: `pg_cron` her gün veritabanına yazdığı için
+Supabase'in "ücretsiz projeler 1 hafta hareketsizlikte duraklatılır" kuralı
+kendiliğinden konu dışı kalıyor.
+
+> **Mac mini M4 notu.** Bir ara bu işi ev sunucusuna vermeyi konuştuk; alım şimdilik
+> yok. İleride alınırsa doğru kullanım "sunucu" değil **işçi** olurdu: dışarı hiç
+> port açmadan fiyatları çeker, TEFAS'ı kazır, sonuçları Supabase'e yazar.
+> İstemciler yine Supabase'den okuduğu için mini kapalıyken de uygulama çalışır,
+> yalnızca fiyatlar bayatlar. Bu kararın şemaya etkisi yok — sadece
+> `prices_latest`'e kimin yazdığı değişir.
 
 ### Faz 4 — Çok kullanıcı hazırlığı (yakın çevreye açarken)
 
