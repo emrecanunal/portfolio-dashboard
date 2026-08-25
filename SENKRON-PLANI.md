@@ -243,10 +243,29 @@ lint kontrolü de eklenecek.
 > **Node 22 zorunlu oldu.** `supabase-js` `engines: node >=22` diyor ve Vercel
 > Node 20 çalışma zamanını 1 Ekim 2026'da kaldırıyor.
 
-### Faz 2 — Senkron katmanı
+### Faz 2 — Senkron katmanı ✅ (tamamlandı, 25 Ağustos 2026)
 
 `src/lib/sync.js`, outbox, Realtime aboneliği, senkron durumu göstergesi
 ("son senkron 2 dk önce" / "çevrimdışı, 3 değişiklik bekliyor").
+
+> **Faz 2'de öğrenilenler.**
+>
+> **Kimliğin benzersizliği varsayılamaz, doğrulanmalı.** 364 işlemin 39'u başka
+> bir işlemle aynı id'yi taşıyordu: `import-investing.mjs`'in `idPrefix`
+> varsayılanı `'inv'` olduğu için iki ayrı Investing.com dosyası da `inv-1`'den
+> numaralanmıştı. `inv-39` hem `sub-t3`'te bir CRDFA alımı hem `sub-global`'de
+> bir TEM satışıydı. Tek tarayıcıda hiçbir belirtisi yok — id'ye bakan tek şey
+> senkron. Artık hem içe aktarmada önek zorunlu (hedef portföyden türüyor) hem
+> `parseJsonBackup` çift id'leri kapıda onarıyor.
+>
+> **Senkron, kendisine söyleneni yapar.** Sunucuya bir ara Mayıs yedeği
+> yüklendi ve senkron onu sadakatle yukarı taşıdı: 256 işlem, 4 portföy.
+> Hata değildi, ama şunu gösterdi — geri yükleme artık iki cihazı birden
+> etkileyen bir işlem. Onay ekranının bunu söylemesi gerekiyor (Faz 4).
+>
+> **Toptan değiştirmeler fark almalı.** Yalnızca yeni satırları "gönder"
+> işaretlemek, kaybolanları sunucuda bırakır ve bir sonraki çekmede geri
+> getirir. `outboxForReplacement` gidenlere mezar taşı koyuyor.
 
 ### Faz 3 — Fiyat katmanı sunucuya
 
