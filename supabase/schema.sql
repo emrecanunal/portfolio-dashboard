@@ -256,8 +256,6 @@ create policy read_all on public.fx_monthly     for select to authenticated usin
 -- dokunabilir misin"i, RLS "hangi satırlarına"yı söyler. Yetki olmadan RLS'in
 -- ne yazdığının önemi yok — sorgu daha politikaya varmadan reddedilir.
 --
--- anon (giriş yapmamış ziyaretçi) hiçbir şey almıyor. Politikalar zaten
--- `to authenticated` diyor, ama yetkiyi de vermemek savunmayı iki kat yapar.
 -- ---------------------------------------------------------------------------
 grant usage on schema public to authenticated;
 
@@ -272,6 +270,34 @@ grant select on
   public.instruments, public.prices_latest, public.prices_monthly,
   public.fx_latest, public.fx_monthly
   to authenticated;
+
+-- anon'dan HER ŞEYİ GERİ AL — ve bu satırlar dekoratif değil.
+--
+-- İlk yazışımda buraya "anon zaten hiçbir şey almıyor" diye bir yorum koymuştum.
+-- Yanlıştı. Supabase, public şemasında oluşturulan her tabloya anon, authenticated
+-- ve service_role için varsayılan yetkiler veriyor; yani anon, biz ona hiçbir şey
+-- vermesek de tabloların hepsinde SELECT/INSERT/UPDATE/DELETE ile doğuyor.
+--
+-- Bunu canlıda scripts/check-backend.mjs ortaya çıkardı: anonim bir INSERT
+-- denemesi "permission denied for table transactions" değil, "new row violates
+-- row-level security policy" ile döndü. İkisi de isteği reddediyor, ama ilki
+-- yetki katmanında, ikincisi tek başına RLS'te — yani sandığımız iki katmanlı
+-- savunma aslında tek katmanmış ve tamamı bir politika ifadesinin doğruluğuna
+-- bağlıymış.
+--
+-- Giriş yapılmamış bir istemcinin bu tablolarda hiçbir işi yok: uygulama
+-- sunucuya yalnızca oturum açıldıktan sonra gidiyor, magic link ise tabloları
+-- değil auth uç noktasını kullanıyor. Dolayısıyla geri almanın hiçbir maliyeti
+-- yok.
+revoke all on public.profiles, public.portfolios, public.transactions,
+              public.user_settings, public.instruments, public.prices_latest,
+              public.prices_monthly, public.fx_latest, public.fx_monthly
+  from anon;
+
+-- Bundan SONRA eklenen tablolar yine varsayılanlarla doğar. Yeni bir tablo
+-- eklerken bu listeye de eklemeyi unutma; check-backend.mjs'in listesi de
+-- güncellenmeli, yoksa yeni tablo sınanmadan kalır.
+alter default privileges in schema public revoke all on tables from anon;
 
 
 -- ---------------------------------------------------------------------------

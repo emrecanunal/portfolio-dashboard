@@ -61,20 +61,51 @@ console.log(`\n${URL_}\n`)
   if (!reachable) process.exit(1)
 }
 
-// 2-3. Giriş yapılmadan kullanıcı tabloları okunamamalı.
-for (const table of ['transactions', 'portfolios']) {
+// REDDEDİLMENİN ÜÇ DERECESİ — ve neden ayırt etmek gerekiyor
+//
+// "İstek reddedildi" tek bir sonuç değil. Üç ayrı şey olabilir:
+//
+//   permission denied   → yetki katmanı durdurdu. En güçlüsü: istek daha
+//                         politikaya varmadan bitiyor.
+//   RLS reddi           → yetki VAR, tek engel politika. Çalışıyor, ama
+//                         savunmanın tamamı bir ifadenin doğruluğuna bağlı.
+//   boş dizi            → hiçbir şey dönmedi. Ama tablo zaten boşsa bu hiçbir
+//                         şey KANITLAMAZ; herkese açık bir tablo da boş döner.
+//
+// Bu ayrımı ilk sürümde yapmıyordum ve iki sorunu birden gizledi: anon'un
+// tablolarda hâlâ INSERT yetkisi olduğunu (Supabase varsayılanı, şemadan
+// geri alınmamış) ve prices_latest testinin tablo boş olduğu için içi boş
+// olduğunu. İkisi de OK yazıyordu.
+function classify(error, data) {
+  if (error && /permission denied/i.test(error.message)) return { level: 'grant', ok: true }
+  if (error && /row-level security/i.test(error.message)) return { level: 'rls', ok: true }
+  if (error) return { level: 'error', ok: true }
+  if (Array.isArray(data) && data.length === 0) return { level: 'empty', ok: true }
+  return { level: 'leak', ok: false }
+}
+
+const NOTE = {
+  grant: 'yetki katmaninda reddedildi',
+  rls: 'ZAYIF: yalnizca RLS durduruyor, anon yetkisi hala var',
+  empty: 'ZAYIF: bos dondu — tablo zaten bossa bu bir sey kanitlamaz',
+}
+
+const USER_TABLES = ['transactions', 'portfolios', 'profiles', 'user_settings']
+const SHARED_TABLES = ['prices_latest', 'prices_monthly', 'instruments', 'fx_latest', 'fx_monthly']
+
+// Giriş yapılmadan hiçbir tablo okunamamalı.
+for (const table of [...USER_TABLES, ...SHARED_TABLES]) {
   const { data, error } = await c.from(table).select('*').limit(1)
-  const safe = Boolean(error) || (Array.isArray(data) && data.length === 0)
+  const v = classify(error, data)
   report(
-    `${table}: giris yapmadan okunamiyor`,
-    safe,
-    error ? error.message : (safe ? null : `SIZINTI: ${data.length} satir dondu`),
+    `${table}: anonim okuma kapali`,
+    v.ok,
+    v.level === 'leak' ? `SIZINTI: ${data.length} satir dondu` : NOTE[v.level],
   )
 }
 
-// 4. Giriş yapılmadan yazılamamalı. Okumanın boş dönmesi RLS'in çalıştığını
-//    gösterir ama yazma tarafı ayrı bir politika dalı — `with check` eksikse
-//    okuma kapalıyken yazma açık kalabilir ve kimse fark etmez.
+// Yazma ayrı bir politika dalı: `with check` eksikse okuma kapalıyken yazma
+// açık kalabilir ve dışarıdan hiçbir belirtisi olmaz.
 {
   const { error } = await c.from('transactions').insert({
     user_id: '00000000-0000-0000-0000-000000000000',
@@ -83,14 +114,8 @@ for (const table of ['transactions', 'portfolios']) {
     type: 'buy', asset_type: 'bist', symbol: 'TEST',
     quantity: 1, price: 1, currency: 'TRY', trade_date: '2026-01-01',
   })
-  report('transactions: giris yapmadan yazilamiyor', Boolean(error), error?.message)
-}
-
-// 5. Paylaşılan fiyat tabloları da `to authenticated`; anonim okuma boş dönmeli.
-{
-  const { data, error } = await c.from('prices_latest').select('symbol').limit(1)
-  const safe = Boolean(error) || (Array.isArray(data) && data.length === 0)
-  report('prices_latest: anonim okuma kapali', safe, error?.message)
+  const v = classify(error, null)
+  report('transactions: anonim yazma kapali', Boolean(error), NOTE[v.level])
 }
 
 console.log(failed === 0 ? '\nHepsi gecti.\n' : `\n${failed} kontrol basarisiz.\n`)
