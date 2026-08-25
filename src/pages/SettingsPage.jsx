@@ -7,6 +7,7 @@ import { historyCoverage } from '../lib/history.js'
 import { computeHoldings } from '../lib/calculations.js'
 import { exportJsonBackup, parseJsonBackup, exportTransactionsCsv } from '../lib/dataExport.js'
 import { persistenceStatus, isInstalled, daysSince, backupIsStale } from '../lib/persistence.js'
+import { isBackendConfigured, getSession, signOut } from '../lib/backend/index.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
 import { Modal } from '../components/ui/Modal.jsx'
@@ -149,6 +150,9 @@ export default function SettingsPage() {
         <h1 className="text-3xl font-medium text-text-primary">{t.settingsPage.title}</h1>
         <p className="text-sm text-text-tertiary mt-1">{t.settingsPage.subtitle}</p>
       </div>
+
+      {/* === ACCOUNT === */}
+      <AccountCard />
 
       {/* === EXCHANGE RATES === */}
       <Card>
@@ -1449,5 +1453,45 @@ function ExportAction({ icon: Icon, title, description, onClick }) {
       </div>
       <Download size={13} strokeWidth={1.75} className="text-text-tertiary shrink-0" />
     </button>
+  )
+}
+
+// Hangi hesapla girildiği, ve çıkış.
+//
+// Sunucu yapılandırılmamışsa hiç görünmüyor: anahtarsız bir kurulumda "çıkış
+// yap" düğmesi, olmayan bir oturumu kapatmayı teklif etmek olurdu.
+//
+// Çıkış localStorage'daki portföyü SİLMİYOR, yalnızca oturum belirtecini
+// atıyor. Senkron katmanı geldiğinde bu ayrım yeniden düşünülmeli — paylaşılan
+// bir cihazda çıkış yapan biri, verisinin orada kaldığını bilmiyor olabilir.
+function AccountCard() {
+  const { t, ti } = useT()
+  const [user, setUser] = useState(undefined)
+
+  useEffect(() => {
+    if (!isBackendConfigured()) return
+    let alive = true
+    getSession().then((u) => { if (alive) setUser(u) })
+    return () => { alive = false }
+  }, [])
+
+  if (!isBackendConfigured() || !user) return null
+
+  return (
+    <Card>
+      <CardBody className="pt-5 flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-sm text-text-primary truncate">
+            {ti(t.auth.signedInAs, { email: user.email })}
+          </div>
+          <div className="text-2xs text-text-tertiary mt-0.5">
+            {t.auth.privacy}
+          </div>
+        </div>
+        <Button variant="ghost" size="sm" className="shrink-0" onClick={() => signOut()}>
+          {t.auth.signOut}
+        </Button>
+      </CardBody>
+    </Card>
   )
 }

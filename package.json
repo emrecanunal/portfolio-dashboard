@@ -15,9 +15,11 @@
     "probe:funds": "node scripts/probe-fund-sources.mjs",
     "smoke": "node scripts/smoke.mjs",
     "probe:symbols": "node scripts/probe-symbols.mjs",
-    "probe:history": "node scripts/probe-history.mjs"
+    "probe:history": "node scripts/probe-history.mjs",
+    "check:backend": "node scripts/check-backend.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
     "lucide-react": "^0.408.0",
