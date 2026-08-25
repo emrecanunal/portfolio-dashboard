@@ -2,7 +2,11 @@
 // Single source of truth: transactions + subPortfolios + settings.
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+// subscribeWithSelector: SyncProvider store'un YALNIZCA outbox'ını dinlemek
+// istiyor. Bu ara katman olmadan subscribe() her yazmada tetiklenir ve fiyat
+// yenilemesi (dakikada bir, 147 sembol) senkron turu başlatırdı — oysa fiyatlar
+// senkronlanmıyor bile.
+import { persist, subscribeWithSelector } from 'zustand/middleware'
 import { demoTransactions, demoSubPortfolios, demoPriceCache } from '../data/demoData.js'
 import {
   recordPriceSnapshot,
@@ -87,6 +91,7 @@ const defaultSettings = {
 const STARTER_PORTFOLIO = { id: 'sub-default', name: 'Portfolio', color: '#10b981' }
 
 export const usePortfolioStore = create(
+  subscribeWithSelector(
   persist(
     (set, get) => ({
       transactions: [],
@@ -98,39 +103,117 @@ export const usePortfolioStore = create(
       fxHistory: {},
       settings: defaultSettings,
 
+      // Gönderilmeyi bekleyen değişiklikler; ayrıntısı emptyOutbox()'ın üstünde.
+      outbox: emptyOutbox(),
+      syncMeta: { cursor: null, lastSyncAt: null, lastError: null, status: 'idle' },
+
       addTransaction: (tx) =>
-        set((s) => ({
-          transactions: [...s.transactions, { ...tx, id: crypto.randomUUID() }],
-        })),
+        set((s) => {
+          const id = crypto.randomUUID()
+          return {
+            transactions: [...s.transactions, { ...tx, id }],
+            outbox: mark(s.outbox, 'transactions', id, 'upsert'),
+          }
+        }),
 
       updateTransaction: (id, patch) =>
         set((s) => ({
           transactions: s.transactions.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+          outbox: mark(s.outbox, 'transactions', id, 'upsert'),
         })),
 
       deleteTransaction: (id) =>
         set((s) => ({
           transactions: s.transactions.filter((t) => t.id !== id),
+          outbox: mark(s.outbox, 'transactions', id, 'delete'),
         })),
 
       addSubPortfolio: (name) =>
-        set((s) => ({
-          subPortfolios: [...s.subPortfolios, { id: crypto.randomUUID(), name, color: pickColor(s.subPortfolios.length) }],
-        })),
+        set((s) => {
+          const id = crypto.randomUUID()
+          return {
+            subPortfolios: [...s.subPortfolios, { id, name, color: pickColor(s.subPortfolios.length) }],
+            outbox: mark(s.outbox, 'portfolios', id, 'upsert'),
+          }
+        }),
 
       renameSubPortfolio: (id, name) =>
         set((s) => ({
           subPortfolios: s.subPortfolios.map((p) => (p.id === id ? { ...p, name } : p)),
+          outbox: mark(s.outbox, 'portfolios', id, 'upsert'),
         })),
 
       deleteSubPortfolio: (id) =>
         set((s) => ({
           subPortfolios: s.subPortfolios.filter((p) => p.id !== id),
+          outbox: mark(s.outbox, 'portfolios', id, 'delete'),
         })),
 
       updateSettings: (patch) =>
-        set((s) => ({ settings: { ...s.settings, ...patch } })),
+        set((s) => ({
+          settings: { ...s.settings, ...patch },
+          outbox: { ...s.outbox, settings: true },
+        })),
 
+      // === SENKRON ===
+      //
+      // Bu dördünü yalnızca sync.js çağırır. Store'da durmalarının sebebi tek
+      // bir set() içinde hem veriyi hem outbox'ı hem imleci güncellemek: ayrı
+      // ayrı yazılsalardı arada bir render olur ve arayüz yarı uygulanmış bir
+      // senkronu gösterirdi.
+
+      /** Sunucudan gelenleri yerele işle. Yerelde kirli olanlar korunur. */
+      applyPulled: ({ transactions, portfolios, settings, cursor }) =>
+        set((s) => {
+          const next = {}
+          if (transactions) {
+            next.transactions = mergeRows(s.transactions, transactions, s.outbox.transactions)
+          }
+          if (portfolios) {
+            next.subPortfolios = mergeRows(s.subPortfolios, portfolios, s.outbox.portfolios)
+          }
+          // Ayarlar tek nesne, son-yazan-kazanır. Yerelde bekleyen bir ayar
+          // değişikliği varsa sunucudakini almıyoruz; bizimki birazdan gidip
+          // onu ezecek.
+          if (settings && !s.outbox.settings) {
+            next.settings = { ...s.settings, ...settings }
+          }
+          next.syncMeta = { ...s.syncMeta, cursor, lastSyncAt: Date.now(), lastError: null }
+          return next
+        }),
+
+      /** Gönderimi başarılı olan satırları outbox'tan düş. */
+      clearOutbox: (sent) =>
+        set((s) => {
+          const next = emptyOutbox()
+          // Gönderim SIRASINDA yapılan değişiklikler kutuda kalmalı. Kutuyu
+          // toptan boşaltmak, tam o aralıkta girilen bir işlemi sessizce
+          // yutardı: kullanıcı girer, ekranda görür, diğer cihaza hiç ulaşmaz.
+          for (const kind of ['transactions', 'portfolios']) {
+            for (const [id, op] of Object.entries(s.outbox[kind])) {
+              if (sent?.[kind]?.[id] !== op) next[kind][id] = op
+            }
+          }
+          next.settings = sent?.settings ? false : s.outbox.settings
+          return { outbox: next }
+        }),
+
+      setSyncStatus: (status, error = null) =>
+        set((s) => ({ syncMeta: { ...s.syncMeta, status, lastError: error } })),
+
+      /** Her şeyi kirli işaretle — ilk senkron ve "baştan gönder" için. */
+      markEverythingDirty: () =>
+        set((s) => {
+          const outbox = emptyOutbox()
+          for (const t of s.transactions) outbox.transactions[t.id] = 'upsert'
+          for (const p of s.subPortfolios) outbox.portfolios[p.id] = 'upsert'
+          outbox.settings = true
+          return { outbox }
+        }),
+
+      // Dil ve tema CİHAZA ait, kişiye değil — telefonda karanlık, masaüstünde
+      // açık isteyebilirsin. Bu yüzden outbox'a girmiyorlar, SYNCED_SETTINGS de
+      // onları dışarıda bırakıyor.
       setLanguage: (lang) =>
         set((s) => ({ settings: { ...s.settings, language: lang } })),
 
@@ -164,11 +247,13 @@ export const usePortfolioStore = create(
           priceHistory: {},
           fxHistory: {},
           settings: s.settings,
+          outbox: outboxForReplacement(s, demoTransactions, demoSubPortfolios),
         })),
 
       clearAllTransactions: () =>
         set((s) => ({
           transactions: [],
+          outbox: outboxForReplacement(s, [], s.subPortfolios),
         })),
 
       // === FX REFRESH ===
@@ -485,6 +570,15 @@ export const usePortfolioStore = create(
             // the key to that list later cannot quietly break it.
             lastBackupAt: s.settings.lastBackupAt,
           },
+          // Geri yükleme sunucuya da yansımalı, yoksa dosyadan gelen kayıtlar
+          // bu cihazda kalır ve bir sonraki çekmede sunucudakiler onları geri
+          // getirir — kullanıcı geri yükleme yapar, birkaç dakika sonra eski
+          // hâli geri gelir ve neden olduğunu anlayamaz.
+          outbox: outboxForReplacement(
+            s,
+            data.transactions || s.transactions,
+            data.subPortfolios || s.subPortfolios,
+          ),
         })),
     }),
     {
@@ -492,13 +586,23 @@ export const usePortfolioStore = create(
       // Bump this whenever a new top-level field is added, and handle the gap
       // in `migrate`. Before this existed, adding a field meant every returning
       // user got `undefined` for it until something happened to write it.
-      version: 1,
+      version: 2,
       migrate: (persisted, fromVersion) => {
         if (!persisted) return persisted
         if (fromVersion < 1) {
           // v0 → v1: the month-end archives did not exist. Start them empty;
           // Settings offers a one-click backfill to populate the past.
-          return { ...persisted, priceHistory: {}, fxHistory: {} }
+          persisted = { ...persisted, priceHistory: {}, fxHistory: {} }
+        }
+        if (fromVersion < 2) {
+          // v1 → v2: sync arrived. The outbox starts EMPTY and the cursor null,
+          // which together mean "this browser has never synced". sync.js reads
+          // exactly that pair to decide the first run is an adoption rather
+          // than an ordinary round, and marks everything dirty itself.
+          //
+          // Pre-filling the outbox here instead would push on the very first
+          // load after an update, before the user has seen a word about it.
+          persisted = { ...persisted, outbox: emptyOutbox(), syncMeta: { cursor: null, lastSyncAt: null, lastError: null, status: 'idle' } }
         }
         return persisted
       },
@@ -512,7 +616,98 @@ export const usePortfolioStore = create(
       },
     }
   )
+  )
 )
+
+// === OUTBOX ===
+//
+// Hangi satırın gönderilmeyi beklediğini tutan defter: { id: 'upsert'|'delete' }.
+//
+// NEDEN SATIRIN ÜSTÜNDE BİR `_dirty` BAYRAĞI DEĞİL
+//
+// Bayrak, veri modelinin parçası olurdu: yedek dosyasına girer, CSV'ye girer,
+// calculations.js'in gördüğü nesnede durur ve bir gün birinin `_dirty`i gerçek
+// bir alan sanmasıyla biter. Ayrı bir defter, senkronun muhasebesini verinin
+// kendisinden ayrı tutuyor.
+//
+// Defter zustand persist ile diske de yazılıyor — kasıtlı. Uçakta girilen üç
+// işlem, uygulamayı kapatıp açınca kaybolmasın diye.
+
+function emptyOutbox() {
+  return { transactions: {}, portfolios: {}, settings: false }
+}
+
+function mark(outbox, kind, id, op) {
+  return { ...outbox, [kind]: { ...outbox[kind], [id]: op } }
+}
+
+/**
+ * Toptan değiştirmelerin (demo yükle, yedekten geri yükle, hepsini temizle)
+ * outbox'ı.
+ *
+ * BURADAKİ İNCELİK: kaybolan satırlar.
+ *
+ * Yalnızca yeni satırları 'upsert' işaretlemek yetmiyor. 364 işlemi 256'lık bir
+ * yedekle değiştirdiğinde, aradaki 108 satır sunucuda öylece duruyor ve bir
+ * sonraki çekmede geri geliyor. Kullanıcı geri yükleme yapar, birkaç dakika
+ * sonra sildiği kayıtların geri geldiğini görür ve bunu senkronun bozukluğu
+ * sanır — oysa hiç kimse onlara "sil" dememiştir.
+ *
+ * Bu yüzden fark alınıyor: gidenler 'delete', kalanlar ve gelenler 'upsert'.
+ */
+function outboxForReplacement(state, nextTransactions, nextPortfolios) {
+  const outbox = emptyOutbox()
+  outbox.settings = state.outbox?.settings ?? false
+
+  const pairs = [
+    ['transactions', state.transactions, nextTransactions],
+    ['portfolios', state.subPortfolios, nextPortfolios],
+  ]
+
+  for (const [kind, before, after] of pairs) {
+    const survivors = new Set(after.map((r) => r.id))
+    for (const row of before) {
+      if (!survivors.has(row.id)) outbox[kind][row.id] = 'delete'
+    }
+    for (const row of after) outbox[kind][row.id] = 'upsert'
+  }
+
+  return outbox
+}
+
+/**
+ * Sunucudan gelen satırları yerel diziye işle.
+ *
+ * ÜÇ KURAL:
+ *   - Yerelde kirli olan satıra DOKUNMA. Bizim değişikliğimiz henüz gitmedi;
+ *     sunucudaki onun eski hâli. Üstüne yazmak, kullanıcının az önce yaptığı
+ *     düzenlemeyi geri almak olurdu.
+ *   - deleted_at dolu gelen satırı yerelden çıkar.
+ *   - Gerisinde sunucu kazanır.
+ *
+ * Sıra korunuyor: mevcut satırlar yerinde güncelleniyor, yeniler sona
+ * ekleniyor. Diziyi baştan kurmak, işlem listesinin her senkronda kendiliğinden
+ * yeniden sıralanması demek olurdu.
+ *
+ * `incoming` uygulama şeklinde gelir, üstünde tek fazladan alan olarak
+ * `deleted_at` taşır — sync.js çevirir. O alan yerele YAZILMAZ; mezar taşı
+ * sunucunun muhasebesi, uygulamanın veri modeli değil.
+ */
+function mergeRows(local, incoming, dirty) {
+  const byId = new Map(local.map((r) => [r.id, r]))
+
+  for (const row of incoming) {
+    if (dirty[row.id]) continue
+    if (row.deleted_at) {
+      byId.delete(row.id)
+    } else {
+      const { deleted_at, ...clean } = row
+      byId.set(row.id, clean)
+    }
+  }
+
+  return [...byId.values()]
+}
 
 // Record "we tried this source just now" for the sources a refresh covered.
 // The auto-refresh scheduler reads these to decide what is due: equities every

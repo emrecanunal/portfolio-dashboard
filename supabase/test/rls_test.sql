@@ -33,22 +33,41 @@ insert into public.prices_latest (symbol, price, currency) values ('THYAO', 312.
 
 
 -- ---------------------------------------------------------------------------
--- 1. Yeni kullanıcıya portföy açılıyor mu
+-- 1. Yeni kullanıcıya profil ve ayar satırı açılıyor, PORTFÖY AÇILMIYOR
 --
--- Açılmazsa yeni bir hesabın ilk işlemi var olmayan bir portföye referans verir
--- ve transactions'ın foreign key'i onu reddeder — kullanıcı uygulamayı ilk
--- açtığında hiçbir şey kaydedemez.
+-- Portföyün açılmaması kasıtlı. Bir önceki sürüm açıyordu ve sonucu şuydu:
+-- zaten portföyleri olan biri ilk kez senkronladığında, kendi açmadığı boş bir
+-- dördüncü portföy arayüzünde beliriyordu. Sunucu, istemcinin göndermediği
+-- veriyi uydurmamalı — istemci zaten kendi başlangıç portföyüyle açılıyor.
 -- ---------------------------------------------------------------------------
 do $$
 declare n int;
 begin
+  select count(*) into n from public.profiles
+   where user_id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  assert n = 1, format('handle_new_user profil acmadi (bulunan: %s)', n);
+
+  select count(*) into n from public.user_settings
+   where user_id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  assert n = 1, format('handle_new_user ayar satiri acmadi (bulunan: %s)', n);
+
   select count(*) into n from public.portfolios
-   where user_id = 'aaaaaaaa-0000-0000-0000-000000000001' and id = 'sub-default';
-  assert n = 1, format('handle_new_user portfoy acmadi (bulunan: %s)', n);
+   where user_id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  assert n = 0, format('handle_new_user portfoy UYDURDU (bulunan: %s)', n);
 end $$;
 
 
 set role authenticated;
+
+-- Portföyler istemciden gelir; işlemlerin yabancı anahtarı onlara bakıyor.
+-- Senkron da aynı sırayı izliyor: önce portföyler, sonra işlemler.
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+insert into public.portfolios (user_id, id, name, color)
+values ('aaaaaaaa-0000-0000-0000-000000000001', 'sub-default', 'Portfolio', '#10b981');
+
+set request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000002';
+insert into public.portfolios (user_id, id, name, color)
+values ('bbbbbbbb-0000-0000-0000-000000000002', 'sub-default', 'Portfolio', '#10b981');
 
 
 -- ---------------------------------------------------------------------------

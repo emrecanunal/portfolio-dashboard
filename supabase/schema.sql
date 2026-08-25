@@ -87,7 +87,12 @@ create table if not exists public.transactions (
   user_id      uuid        not null references auth.users on delete cascade,
   id           text        not null,
   portfolio_id text        not null,
-  type         text        not null check (type in ('buy', 'sell', 'deposit', 'withdraw')),
+  -- 'exchange' bu listede, çünkü dataExport.js'in TXN_TYPES'ı onu geçerli
+  -- sayıyor. Şemanın kabul ettiği tipler ile uygulamanın ürettiği tipler
+  -- ayrışırsa, ayrışma sessiz kalmaz ama geç kalır: kullanıcı işlemi girer,
+  -- uygulamada görür, ve o satır senkronda check ihlaliyle sonsuza kadar
+  -- takılı kalır. Yeni bir işlem tipi eklerken burası da güncellenmeli.
+  type         text        not null check (type in ('buy', 'sell', 'deposit', 'withdraw', 'exchange')),
   asset_type   text        not null check (asset_type in ('bist', 'tefas', 'global', 'cash')),
   symbol       text        not null,
   quantity     numeric     not null,
@@ -301,11 +306,22 @@ alter default privileges in schema public revoke all on tables from anon;
 
 
 -- ---------------------------------------------------------------------------
--- 6. Yeni kullanıcı → boş profil + boş portföy
+-- 6. Yeni kullanıcı → boş profil ve boş ayarlar
 --
--- Uygulama ilk açılışta subPortfolios[0]'a işlem yazıyor. Sunucu tarafında da
--- bir portföy hazır beklemezse, yeni bir hesabın ilk işlemi var olmayan bir
--- portföye referans verir ve transactions'ın foreign key'i onu reddeder.
+-- PORTFÖY BURADA AÇILMIYOR — VE BİR ÖNCEKİ SÜRÜMDE AÇILIYORDU
+--
+-- Gerekçe "yeni bir hesabın ilk işlemi var olmayan bir portföye referans
+-- vermesin" idi. Doğru bir kaygı, yanlış çözüm: istemci zaten STARTER_PORTFOLIO
+-- ile açılıyor (store.js) ve ilk senkronda onu kendisi gönderiyor, üstelik
+-- işlemlerden önce. Yani yabancı anahtar zaten karşılanıyordu.
+--
+-- Karşılığında ödenen bedel şuydu: sunucu, istemcinin hiç bilmediği bir satır
+-- üretiyordu. Zaten portföyleri olan biri (T3, Mixed, Amerika) ilk kez
+-- senkronladığında bu satırı çeker ve arayüzünde dördüncü, boş bir portföy
+-- belirir — kendi açmadığı, ne olduğunu bilmediği bir şey. Tek kullanıcıda
+-- can sıkıcı, birden fazla cihazda kafa karıştırıcı.
+--
+-- Sunucu, istemcinin göndermediği veriyi uydurmasın. Kural bu.
 -- ---------------------------------------------------------------------------
 create or replace function public.handle_new_user()
 returns trigger
@@ -315,10 +331,6 @@ as $$
 begin
   insert into public.profiles (user_id) values (new.id)
     on conflict (user_id) do nothing;
-
-  insert into public.portfolios (user_id, id, name, color)
-    values (new.id, 'sub-default', 'Portfolio', '#10b981')
-    on conflict (user_id, id) do nothing;
 
   insert into public.user_settings (user_id) values (new.id)
     on conflict (user_id) do nothing;

@@ -51,6 +51,11 @@ export const translations = {
       privacy: 'Your portfolio is yours alone. Every row is scoped to your account inside the database, not by the app asking nicely.',
       signOut: 'Sign out',
       signedInAs: 'Signed in as {email}',
+      syncing: 'Syncing…',
+      syncedAt: 'Synced {time}',
+      syncNever: 'Not synced yet',
+      syncPending: '{n} change(s) waiting to sync',
+      syncFailed: 'Sync failed',
     },
     warnings: {
       title: 'Check your data',
@@ -432,6 +437,11 @@ export const translations = {
       privacy: 'Portföyün yalnızca senin. Her satır veritabanının kendi içinde hesabına bağlı — uygulamanın nezaketine değil.',
       signOut: 'Çıkış yap',
       signedInAs: '{email} olarak girildi',
+      syncing: 'Senkronlanıyor…',
+      syncedAt: '{time} senkronlandı',
+      syncNever: 'Henüz senkronlanmadı',
+      syncPending: '{n} değişiklik senkron bekliyor',
+      syncFailed: 'Senkron başarısız',
     },
     warnings: {
       title: 'Verini kontrol et',

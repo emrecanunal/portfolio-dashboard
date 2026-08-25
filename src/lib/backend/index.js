@@ -73,3 +73,32 @@ export function getSession() {
 export function onAuthChange(callback) {
   return supabase.onAuthChange(callback)
 }
+
+// --- Veri -----------------------------------------------------------------
+
+/**
+ * `cursor`dan sonra değişen satırlar. Silinmiş olanlar da gelir.
+ * @returns {Promise<{ok, transactions?, portfolios?, settings?, serverNow?, error?}>}
+ */
+export function pull(cursor) {
+  return supabase.pull(cursor)
+}
+
+/**
+ * Satırları yazar. Portföyler işlemlerden önce gider (yabancı anahtar).
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export function push(payload) {
+  return supabase.push(payload)
+}
+
+/**
+ * Karşı cihaz yazdığında haber verir. Yükü taşımaz, yalnızca sinyaldir —
+ * çağıran normal bir pull yapar.
+ * @returns {() => void} aboneliği bırakan fonksiyon
+ */
+export function subscribeToChanges(userId, onChange) {
+  return supabase.subscribeToChanges(userId, onChange)
+}
+
+export { SYNCED_SETTINGS, txToDb, txFromDb, portfolioToDb, portfolioFromDb, settingsToDb, settingsFromDb } from './mapping.js'

@@ -1456,17 +1456,26 @@ function ExportAction({ icon: Icon, title, description, onClick }) {
   )
 }
 
-// Hangi hesapla girildiği, ve çıkış.
+// Hangi hesapla girildiği, senkron ne durumda, ve çıkış.
 //
 // Sunucu yapılandırılmamışsa hiç görünmüyor: anahtarsız bir kurulumda "çıkış
 // yap" düğmesi, olmayan bir oturumu kapatmayı teklif etmek olurdu.
 //
+// SENKRON DURUMU NEDEN GÖRÜNÜR OLMAK ZORUNDA
+//
+// Sessizce çalışan bir senkron, bozulduğunda da sessizdir. Kullanıcı telefonda
+// işlem girer, masaüstünde göremez ve uygulamanın onu kaybettiğini sanır —
+// oysa satır outbox'ta bekliyordur, tek eksik biri ona bunu söylemektir.
+// "3 değişiklik bekliyor" yazan bir satır, aynı durumu bir arıza olmaktan
+// çıkarıp bir bilgiye dönüştürüyor.
+//
 // Çıkış localStorage'daki portföyü SİLMİYOR, yalnızca oturum belirtecini
-// atıyor. Senkron katmanı geldiğinde bu ayrım yeniden düşünülmeli — paylaşılan
-// bir cihazda çıkış yapan biri, verisinin orada kaldığını bilmiyor olabilir.
+// atıyor. Paylaşılan bir cihazda bu bir eksiklik; Faz 4'te ele alınacak.
 function AccountCard() {
   const { t, ti } = useT()
   const [user, setUser] = useState(undefined)
+  const syncMeta = usePortfolioStore((s) => s.syncMeta)
+  const outbox = usePortfolioStore((s) => s.outbox)
 
   useEffect(() => {
     if (!isBackendConfigured()) return
@@ -1477,21 +1486,60 @@ function AccountCard() {
 
   if (!isBackendConfigured() || !user) return null
 
+  const pending =
+    Object.keys(outbox.transactions).length +
+    Object.keys(outbox.portfolios).length +
+    (outbox.settings ? 1 : 0)
+
   return (
     <Card>
-      <CardBody className="pt-5 flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-sm text-text-primary truncate">
-            {ti(t.auth.signedInAs, { email: user.email })}
+      <CardBody className="pt-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm text-text-primary truncate">
+              {ti(t.auth.signedInAs, { email: user.email })}
+            </div>
+            <div className="text-2xs text-text-tertiary mt-0.5">
+              {t.auth.privacy}
+            </div>
           </div>
-          <div className="text-2xs text-text-tertiary mt-0.5">
-            {t.auth.privacy}
-          </div>
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => signOut()}>
+            {t.auth.signOut}
+          </Button>
         </div>
-        <Button variant="ghost" size="sm" className="shrink-0" onClick={() => signOut()}>
-          {t.auth.signOut}
-        </Button>
+
+        <div className="mt-4 pt-3 border-t border-border-subtle flex items-center gap-2">
+          <SyncDot status={syncMeta.status} pending={pending} />
+          <span className="text-2xs text-text-tertiary">
+            <SyncLabel meta={syncMeta} pending={pending} t={t} ti={ti} />
+          </span>
+        </div>
       </CardBody>
     </Card>
   )
+}
+
+function SyncDot({ status, pending }) {
+  const color =
+    status === 'error' ? 'bg-danger'
+    : status === 'syncing' ? 'bg-info'
+    : pending > 0 ? 'bg-warning'
+    : 'bg-success'
+  return <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', color)} />
+}
+
+// Hata mesajı bekleyen sayısını GİZLEMİYOR, ikisi birlikte gösteriliyor.
+// "Senkron başarısız" tek başına, verinin gitmediğini söyler ama nerede
+// durduğunu söylemez; kullanıcının bilmek istediği ikincisi.
+function SyncLabel({ meta, pending, t, ti }) {
+  if (meta.status === 'error') {
+    return <span className="text-danger">
+      {t.auth.syncFailed}{meta.lastError ? ` — ${meta.lastError}` : ''}
+      {pending > 0 ? ` · ${ti(t.auth.syncPending, { n: pending })}` : ''}
+    </span>
+  }
+  if (meta.status === 'syncing') return t.auth.syncing
+  if (pending > 0) return ti(t.auth.syncPending, { n: pending })
+  if (!meta.lastSyncAt) return t.auth.syncNever
+  return ti(t.auth.syncedAt, { time: formatRelativeTime(meta.lastSyncAt) })
 }

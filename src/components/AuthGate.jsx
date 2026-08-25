@@ -22,6 +22,7 @@
 import { useEffect, useState } from 'react'
 import { isBackendConfigured, getSession, onAuthChange } from '../lib/backend/index.js'
 import { SignIn } from '../pages/SignIn.jsx'
+import { SyncProvider } from './SyncProvider.jsx'
 
 export function AuthGate({ children }) {
   const configured = isBackendConfigured()
@@ -54,5 +55,15 @@ export function AuthGate({ children }) {
   if (!configured) return children
   if (user === undefined) return null
   if (!user) return <SignIn />
-  return children
+
+  // SyncProvider yalnızca oturum varken monte oluyor ve userId'yi prop olarak
+  // alıyor. Kendi içinde getSession() çağırsaydı, oturumun kurulmasıyla
+  // senkronun başlaması arasında bir yarış olurdu ve ilk turda userId null
+  // gelebilirdi — o turda da gönderilecek satırların user_id'si boş kalırdı.
+  return (
+    <>
+      <SyncProvider userId={user.userId} />
+      {children}
+    </>
+  )
 }
