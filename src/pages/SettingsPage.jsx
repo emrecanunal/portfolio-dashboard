@@ -1347,6 +1347,11 @@ function ExportBackupActions() {
                 list: [...new Set(restoreConfirm.issues.flatMap((i) => i.problems))].join(', '),
               })
             : null,
+          // Sessizce onarmak, onarmamak kadar kötü olurdu: kullanıcı dosyasını
+          // açtığında id'lerin değiştiğini görür ve nedenini bilmez.
+          restoreConfirm?.summary?.reIded
+            ? ti(t.settingsPage.restoreReIded, { n: restoreConfirm.summary.reIded })
+            : null,
           t.settingsPage.restoreKeepsRates,
           t.settingsPage.restoreSafetyCopy,
         ]

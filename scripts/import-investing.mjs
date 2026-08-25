@@ -365,11 +365,35 @@ export function cashRunway(transactions) {
 // The commission rides on each leg as a fee, where the app already knows what
 // to do with it: it raises the cost basis of a buy and reduces the proceeds of
 // a sell, which is exactly how the export's own P/L was computed.
+//
+// idPrefix'in ARTIK VARSAYILANI YOK, ve bunun bir bedeli oldu.
+//
+// Eskiden 'inv' idi. İki ayrı Investing.com dosyasını varsayılanla içe aktarmak
+// ikisini de inv-1'den başlatıyordu, yani ikinci içe aktarmanın her satırı
+// birincisinden biriyle aynı id'yi taşıyordu. Ağustos 2026'da tam bu oldu: 364
+// işlemin 39'u çift id'liydi — inv-39 hem sub-t3'te bir CRDFA alımı hem
+// sub-global'de bir TEM satışıydı.
+//
+// Tek tarayıcıda hiçbir belirtisi yok; hiçbir ekran id'ye bakmıyor. Senkron ise
+// tamamen id'ye bakıyor ve çakışan iki satırdan biri sessizce diğerinin üstüne
+// yazılıyor.
+//
+// Zorunlu hale getirmek, "varsayılanı benzersiz yapmak"tan iyi: çağıran ne
+// yazdığını görüyor ve aynı dosyayı iki kez aktarmak hâlâ aynı id'leri üretiyor
+// (yani tekrar aktarmak kayıtları ikizlemiyor). Kaybolan tek şey, sessizce
+// yanlış olanı seçme imkânı.
 export function toTransactions(
   { open, closed },
   portfolioId,
-  { assetType = 'bist', currency = 'TRY', commission = 0, idPrefix = 'inv' } = {}
+  { assetType = 'bist', currency = 'TRY', commission = 0, idPrefix } = {}
 ) {
+  if (!idPrefix) {
+    throw new Error(
+      'toTransactions: idPrefix zorunlu. Her kaynak dosya kendi onekini almali ' +
+      '(orn. "t3", "amerika"), yoksa iki ice aktarma ayni id\'leri uretir.'
+    )
+  }
+
   const transactions = []
   let n = 0
   const push = (tx) => transactions.push({ id: `${idPrefix}-${++n}`, ...tx })
@@ -420,7 +444,10 @@ export function toTransactions(
 }
 
 /** Declared funding, in the shape the app stores cash in. */
-export function toDeposits(deposits, portfolioId, currency = 'TRY', idPrefix = 'fund') {
+export function toDeposits(deposits, portfolioId, currency = 'TRY', idPrefix) {
+  if (!idPrefix) {
+    throw new Error('toDeposits: idPrefix zorunlu — bkz. toTransactions.')
+  }
   return deposits.map((d, i) => ({
     id: `${idPrefix}-${i + 1}`,
     date: d.date,
@@ -566,8 +593,12 @@ if (process.argv[1] && process.argv[1].endsWith('import-investing.mjs')) {
     (t) => t.portfolioId !== target.id || !drops.has(t.assetType)
   )
   const replaced = transactions.length - kept.length
-  const imported = toTransactions(parsed, target.id, { assetType, currency, commission })
-  const funding = toDeposits(deposits, target.id, currency)
+  // Önek hedef portföyden türüyor: aynı dosyayı aynı portföye tekrar aktarmak
+  // aynı id'leri üretir (ikizlenme yok), farklı portföylere aktarmak farklı
+  // id'ler üretir (çakışma yok).
+  const prefix = target.id.replace(/[^a-z0-9]+/gi, '-')
+  const imported = toTransactions(parsed, target.id, { assetType, currency, commission, idPrefix: `${prefix}-tx` })
+  const funding = toDeposits(deposits, target.id, currency, `${prefix}-cash`)
 
   console.log(
     `"${intoName}": replaced ${replaced} ${assetType} transactions with ` +

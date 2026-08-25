@@ -170,6 +170,8 @@ export function parseJsonBackup(text) {
     }
   }
 
+  const reIded = giveDuplicateIdsNewOnes(transactions)
+
   const settings = {}
   for (const key of RESTORABLE_SETTINGS) {
     if (data.settings && data.settings[key] !== undefined) settings[key] = data.settings[key]
@@ -189,6 +191,7 @@ export function parseJsonBackup(text) {
     summary: {
       transactions: transactions.length,
       dropped: issues.length,
+      reIded,
       portfolios: subPortfolios.length,
       exportedAt: data.exportedAt,
       // Backups written before versioning claim nothing. Treat that as 0
@@ -196,6 +199,55 @@ export function parseJsonBackup(text) {
       version: Number(data.version) || 0,
     },
   }
+}
+
+/**
+ * Aynı id'yi taşıyan işlemlere yeni id ver. Kaç tanesinin değiştiğini döndürür.
+ *
+ * BU NEDEN VAR — GERÇEK BİR OLAY
+ *
+ * scripts/import-investing.mjs id'leri `${idPrefix}-${n}` diye üretiyor ve
+ * idPrefix'in varsayılanı 'inv'. İki ayrı Investing.com dosyasını varsayılanla
+ * içe aktarınca ikisi de inv-1'den başlıyor. Ağustos 2026'da tam bu oldu: 364
+ * işlemin 39'u başka bir işlemle id paylaşıyordu — inv-39 hem sub-t3'te bir
+ * CRDFA alımı hem sub-global'de bir TEM satışıydı. İki farklı işlem, tek kimlik.
+ *
+ * Tek tarayıcıda bu hiç fark edilmiyor; hiçbir ekran id'ye bakmıyor. Senkron ise
+ * TAMAMEN id'ye bakıyor: id satırın kimliği, sunucudaki birincil anahtarın
+ * yarısı, birleştirmenin anahtarı. Çakışan iki satırdan biri sessizce diğerinin
+ * üstüne yazılıyor ve 39 işlem yok oluyor — hata vermeden, ekranda bir eksilme
+ * belirtisi olmadan.
+ *
+ * Kapıda düzeltmek, uygulamanın içinde düzeltmekten iyi: hangi dosya gelirse
+ * gelsin — bugünkü yedek, üç yıllık bir arşiv, elle düzenlenmiş bir JSON —
+ * içeri benzersiz id'lerle giriyor. Onarım sessiz değil: sayısı summary'de
+ * dönüyor ve onay ekranında yazıyor.
+ *
+ * İLK GÖRÜLEN KORUNUR. Hangisinin "asıl" olduğunu bilmenin yolu yok, ama
+ * kararlı davranmanın var: dosyadaki sırayı esas alıyoruz, böylece aynı dosyayı
+ * iki kez yüklemek aynı sonucu veriyor.
+ */
+function giveDuplicateIdsNewOnes(transactions) {
+  const seen = new Set()
+  let changed = 0
+
+  for (const tx of transactions) {
+    if (!isNonEmptyString(tx.id) || seen.has(tx.id)) {
+      tx.id = newId()
+      changed++
+    }
+    seen.add(tx.id)
+  }
+
+  return changed
+}
+
+function newId() {
+  // crypto.randomUUID tarayıcıda ve Node 19+'ta var. Yoksa da bir şey döndürmek
+  // zorundayız: id üretemeyip çakışmayı olduğu gibi bırakmak, düzeltmeye
+  // çalıştığımız hatanın ta kendisi.
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  return `fix-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 // === CSV EXPORT (transactions) ===

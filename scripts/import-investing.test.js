@@ -196,6 +196,7 @@ describe('toTransactions', () => {
     assetType: 'global',
     currency: 'USD',
     commission: 1.5,
+    idPrefix: 'p1-tx',
   })
 
   it('makes one buy per open lot and a buy plus a sell per closed one', () => {
@@ -257,5 +258,37 @@ describe('cashRunway', () => {
     expect(r.minDate).toBe('2026-07-02')
     expect(r.min).toBeCloseTo(-200, 6)
     expect(r.negativeDays).toBe(3)
+  })
+})
+
+
+// Ağustos 2026'da 364 işlemin 39'u çift id'liydi: idPrefix'in varsayılanı 'inv'
+// olduğu için iki ayrı Investing.com dosyası da inv-1'den başlamıştı. Tek
+// tarayıcıda hiçbir belirtisi yoktu — id'ye bakan tek şey senkron, ve o daha
+// yoktu. Çakışan iki satırdan biri diğerinin üstüne sessizce yazılıyordu.
+describe('id onekleri: cakisma bir daha sessizce olmasin', () => {
+  const parsed = parseInvestingExport(CSV)
+
+  it('onek verilmezse hata verir', () => {
+    expect(() => toTransactions(parsed, 'p1', { assetType: 'global' }))
+      .toThrow(/idPrefix/)
+  })
+
+  it('farkli onekler farkli id kumeleri uretir', () => {
+    const a = toTransactions(parsed, 'p1', { assetType: 'global', idPrefix: 'a' })
+    const b = toTransactions(parsed, 'p2', { assetType: 'global', idPrefix: 'b' })
+    const overlap = a.map((t) => t.id).filter((id) => b.some((t) => t.id === id))
+    expect(overlap).toEqual([])
+  })
+
+  it('ayni onek ayni id leri uretir — tekrar aktarmak ikizlemesin', () => {
+    const a = toTransactions(parsed, 'p1', { assetType: 'global', idPrefix: 'a' })
+    const b = toTransactions(parsed, 'p1', { assetType: 'global', idPrefix: 'a' })
+    expect(a.map((t) => t.id)).toEqual(b.map((t) => t.id))
+  })
+
+  it('tek bir ice aktarma icinde id ler zaten benzersiz', () => {
+    const txns = toTransactions(parsed, 'p1', { assetType: 'global', idPrefix: 'a' })
+    expect(new Set(txns.map((t) => t.id)).size).toBe(txns.length)
   })
 })

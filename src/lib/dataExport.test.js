@@ -206,3 +206,48 @@ describe('parseJsonBackup: archives', () => {
     expect(r.data.fxHistory).toBeNull()
   })
 })
+
+// Ağustos 2026: 364 işlemin 39'u başka bir işlemle id paylaşıyordu, çünkü
+// import-investing.mjs iki ayrı dosyayı da 'inv-1'den numaralandırmıştı.
+// Senkron tamamen id'ye baktığı için çakışan iki satırdan biri diğerinin
+// üstüne sessizce yazılıyor ve 39 işlem yok oluyordu.
+describe('cift id ler kapida onarilir', () => {
+  const file = (transactions) => JSON.stringify({
+    version: 2,
+    subPortfolios: [{ id: 'p1', name: 'P', color: '#000' }],
+    transactions,
+  })
+
+  const TX = (id, symbol) => ({
+    id, portfolioId: 'p1', type: 'buy', assetType: 'bist', symbol,
+    quantity: 1, price: 10, fee: 0, currency: 'TRY', date: '2026-01-01',
+  })
+
+  it('ayni id li iki islem de hayatta kalir', () => {
+    const r = parseJsonBackup(file([TX('inv-39', 'CRDFA'), TX('inv-39', 'TEM')]))
+    expect(r.ok).toBe(true)
+    expect(r.data.transactions).toHaveLength(2)
+    expect(r.summary.reIded).toBe(1)
+    const ids = r.data.transactions.map((t) => t.id)
+    expect(new Set(ids).size).toBe(2)
+  })
+
+  it('ILK goruleni korur — ayni dosya iki kez ayni sonucu versin', () => {
+    const r = parseJsonBackup(file([TX('inv-39', 'CRDFA'), TX('inv-39', 'TEM')]))
+    expect(r.data.transactions[0].id).toBe('inv-39')
+    expect(r.data.transactions[0].symbol).toBe('CRDFA')
+    expect(r.data.transactions[1].id).not.toBe('inv-39')
+  })
+
+  it('id si olmayan satira da id verir', () => {
+    const r = parseJsonBackup(file([{ ...TX('x', 'AAA'), id: undefined }]))
+    expect(r.summary.reIded).toBe(1)
+    expect(r.data.transactions[0].id).toBeTruthy()
+  })
+
+  it('temiz dosyaya dokunmaz', () => {
+    const r = parseJsonBackup(file([TX('a', 'AAA'), TX('b', 'BBB')]))
+    expect(r.summary.reIded).toBe(0)
+    expect(r.data.transactions.map((t) => t.id)).toEqual(['a', 'b'])
+  })
+})
