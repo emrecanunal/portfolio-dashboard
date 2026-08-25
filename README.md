@@ -101,7 +101,12 @@ Existing data persists in localStorage.
 
 ## Setup (first time)
 
-Requires Node.js 20+. macOS: `brew install node@20`.
+Requires Node.js 22+. macOS: `brew install node@22`.
+
+> Node 20 is not enough any more, for two separate reasons that happen to
+> land together: `@supabase/supabase-js` declares `engines: node >=22`, and
+> Vercel removes the Node 20 runtime on 1 October 2026 — after which the
+> `api/*` functions stop building.
 
 ```bash
 cd portfolio-dashboard
