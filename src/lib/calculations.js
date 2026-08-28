@@ -94,12 +94,24 @@ function cashDeltaTRY(tx, fxRates) {
     tx.currency,
     fxRates
   )
-  if (tx.type === 'deposit' || (tx.assetType === 'cash' && tx.type === 'buy')) {
+  // 'opening' nakit açısından bir para yatırma gibi davranır, ama TASARRUF
+  // DEĞİLDİR — bkz. computeMonthlySavingsSeries. İkisini ayırmak şart: iki
+  // yıllık bilinmeyen fonlamayı tek bir başlangıç bakiyesiyle kapatmak,
+  // o ayın tasarrufu gibi görünseydi FIRE grafiği bir anda zıplardı.
+  if (tx.type === 'deposit' || tx.type === 'opening' || (tx.assetType === 'cash' && tx.type === 'buy')) {
     return convertToTRY((tx.quantity || 1) * (tx.price || 0), tx.currency, fxRates)
   }
   if (tx.type === 'withdraw' || tx.type === 'buy') return -withFee
   if (tx.type === 'sell') {
     return convertToTRY(tx.quantity * tx.price - (tx.fee || 0), tx.currency, fxRates)
+  }
+  if (tx.type === 'transfer') {
+    // __incoming, computeCashRuns'un hedef portföy için ürettiği kopyayı
+    // işaretliyor. Aynı işlem iki akışta birden geçiyor ve her birinde işareti
+    // farklı: kaynakta eksi, hedefte artı.
+    const amount = convertToTRY((tx.quantity || 1) * (tx.price || 0), tx.currency, fxRates)
+    if (tx.__incoming) return amount
+    return -(amount + convertToTRY(tx.fee || 0, tx.currency, fxRates))
   }
   if (tx.type === 'exchange') {
     // FX conversion: outflow in the source currency, inflow in the target.
@@ -115,11 +127,34 @@ function cashDeltaTRY(tx, fxRates) {
   return 0
 }
 
+/**
+ * Portföy başına nakit.
+ *
+ * TRANSFER NEDEN AYRI ELE ALINIYOR
+ *
+ * Diğer her işlem tek bir portföyü etkiliyor, bu yüzden döngü basitçe
+ * tx.portfolioId'ye yazıyor. Transfer iki portföyü birden etkiliyor: kaynaktan
+ * çıkıyor, hedefe giriyor. Tek taraflı işlenirse para yok olur ya da yoktan var
+ * olur — ve bu hiçbir yerde hata vermez, sadece iki sayı yanlış çıkar.
+ *
+ * Toplam üzerinde etkisi SIFIR olmalı; testler bunu kilitliyor.
+ */
 export function computeCashByPortfolio(transactions, fxRates) {
   const cash = new Map()
+  const add = (pid, amount) => cash.set(pid, (cash.get(pid) || 0) + amount)
+
   for (const tx of transactions) {
-    const portfolio = tx.portfolioId
-    cash.set(portfolio, (cash.get(portfolio) || 0) + cashDeltaTRY(tx, fxRates))
+    if (tx.type === 'transfer') {
+      const amount = convertToTRY((tx.quantity || 1) * (tx.price || 0), tx.currency, fxRates)
+      const fee = convertToTRY(tx.fee || 0, tx.currency, fxRates)
+      // Masraf kaynaktan düşüyor: transferi yapan taraf öder, hedefe eksik
+      // para varır. Hedefe tam tutarı yazıp masrafı da kaynaktan düşmek,
+      // parayı yoktan var etmek olurdu.
+      add(tx.portfolioId, -(amount + fee))
+      if (tx.toPortfolioId) add(tx.toPortfolioId, amount)
+      continue
+    }
+    add(tx.portfolioId, cashDeltaTRY(tx, fxRates))
   }
   return cash
 }
@@ -161,11 +196,21 @@ export const SETTLEMENT_TOLERANCE_DAYS = 4
  *            currentTRY, open, transient }], oldest first.
  */
 export function computeCashRuns(transactions, fxRates = {}, today = todayYmd()) {
+  // Transferin İKİ bacağı da ilgili portföyün akışına giriyor: kaynakta çıkış,
+  // hedefte giriş. Yalnızca kaynağa yazılsaydı, hedef portföy parayı hiç almamış
+  // gibi görünür ve nakdi haksız yere eksiye düşerdi — yani düzeltmek için
+  // eklediğimiz özellik, düzeltmeye çalıştığı uyarıyı üretirdi.
   const byPortfolio = new Map()
-  for (const tx of transactions) {
-    const list = byPortfolio.get(tx.portfolioId) || []
+  const push = (pid, tx) => {
+    const list = byPortfolio.get(pid) || []
     list.push(tx)
-    byPortfolio.set(tx.portfolioId, list)
+    byPortfolio.set(pid, list)
+  }
+  for (const tx of transactions) {
+    push(tx.portfolioId, tx)
+    if (tx.type === 'transfer' && tx.toPortfolioId) {
+      push(tx.toPortfolioId, { ...tx, __incoming: true })
+    }
   }
 
   const runs = []
@@ -236,13 +281,19 @@ function finishRun(run, resolvedOn, currentTRY, open, today) {
 export function computeCashByCurrency(transactions, portfolioId = null) {
   const cash = new Map()
   for (const tx of transactions) {
-    if (portfolioId && tx.portfolioId !== portfolioId) continue
+    // Transfer, hedef portföy için de ilgili bir işlem — kaynak filtresine
+    // takılıp elenirse hedefe para hiç ulaşmamış görünür.
+    const relevant =
+      !portfolioId ||
+      tx.portfolioId === portfolioId ||
+      (tx.type === 'transfer' && tx.toPortfolioId === portfolioId)
+    if (!relevant) continue
     const ccy = tx.currency || 'TRY'
     const current = cash.get(ccy) || 0
     const localGross = (tx.quantity || 1) * (tx.price || 1)
     const fee = tx.fee || 0
 
-    if (tx.type === 'deposit' || (tx.assetType === 'cash' && tx.type === 'buy')) {
+    if (tx.type === 'deposit' || tx.type === 'opening' || (tx.assetType === 'cash' && tx.type === 'buy')) {
       cash.set(ccy, current + localGross)
     } else if (tx.type === 'withdraw') {
       cash.set(ccy, current - localGross - fee)
@@ -250,6 +301,16 @@ export function computeCashByCurrency(transactions, portfolioId = null) {
       cash.set(ccy, current - localGross - fee)
     } else if (tx.type === 'sell') {
       cash.set(ccy, current + localGross - fee)
+    } else if (tx.type === 'transfer') {
+      // Aynı para biriminde iki portföy arasında. Bir portföye daraltılmış
+      // sorguda yalnızca ilgili bacak sayılıyor; daraltılmamışta ikisi birden
+      // ve net etki sıfır.
+      if (!portfolioId || tx.portfolioId === portfolioId) {
+        cash.set(ccy, (cash.get(ccy) || 0) - localGross - fee)
+      }
+      if ((!portfolioId || tx.toPortfolioId === portfolioId) && tx.toPortfolioId) {
+        cash.set(ccy, (cash.get(ccy) || 0) + localGross)
+      }
     } else if (tx.type === 'exchange') {
       // Debit source currency by the amount converted (in source units)
       cash.set(ccy, current - (tx.quantity || 0))
@@ -755,6 +816,13 @@ export function computePerformanceSeries(
 function contributedUpTo(txns, fxRates, fxHistory) {
   let total = 0
   for (const tx of txns) {
+    // Yalnızca deposit/withdraw — ve dışarıda kalan ikisi kasıtlı:
+    //
+    //   'transfer'  portföyler arası, yani DIŞARIDAN para gelmiyor. Saymak,
+    //               parayı bir cebinden diğerine koymayı tasarruf ilan etmek olur.
+    //   'opening'   bir başlangıç noktası beyanı. İki yıllık bilinmeyen fonlamayı
+    //               tek satıra indiriyor; onu katkı saymak o ayı devasa bir
+    //               tasarruf ayı gibi gösterir ve FIRE tahminini bozar.
     if (tx.type !== 'deposit' && tx.type !== 'withdraw') continue
     const rates = fxHistory
       ? fxAtMonth(fxHistory, monthKeyOfYmd(txYmd(tx)), fxRates).value
@@ -828,6 +896,7 @@ function netExternalInflowTRY(transactions, fxRates, afterYmd = null) {
   let net = 0
   for (const tx of transactions) {
     if (afterYmd && txYmd(tx) <= afterYmd) continue
+    // 'transfer' ve 'opening' burada da dışarıda — gerekçe contributedUpTo'da.
     if (tx.type !== 'deposit' && tx.type !== 'withdraw') continue
     const amount = convertToTRY((tx.quantity || 1) * (tx.price || 0), tx.currency, fxRates)
     if (tx.type === 'deposit') net += amount

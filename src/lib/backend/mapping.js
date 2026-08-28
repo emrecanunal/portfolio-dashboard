@@ -19,6 +19,11 @@ export function txToDb(tx, userId) {
     user_id: userId,
     id: tx.id,
     portfolio_id: tx.portfolioId,
+    // Transferin hedefi. Diğer tiplerde null — PostgREST toplu eklemede her
+    // satırın aynı anahtar kümesini istediği için alan HER ZAMAN yazılıyor,
+    // sadece değeri değişiyor. undefined bırakmak satırı JSON'dan düşürür ve
+    // tüm yazmayı reddettirir (bkz. api/refresh-prices.js, PGRST102).
+    to_portfolio_id: tx.toPortfolioId ?? null,
     type: tx.type,
     asset_type: tx.assetType,
     symbol: tx.symbol,
@@ -35,6 +40,7 @@ export function txFromDb(row) {
   return {
     id: row.id,
     portfolioId: row.portfolio_id,
+    ...(row.to_portfolio_id ? { toPortfolioId: row.to_portfolio_id } : {}),
     type: row.type,
     assetType: row.asset_type,
     symbol: row.symbol,

@@ -865,3 +865,95 @@ describe('computeHoldingAllocation', () => {
     expect(computeHoldingAllocation(summaryOf([]))).toEqual([])
   })
 })
+
+// Transfer ve başlangıç bakiyesi.
+//
+// Alt portföyler arası para hareketi diye bir kavram yoktu ve bu bir eksiklik
+// olarak değil, bozuk veri olarak görünüyordu: Mixed'de 94.935 yatırıp 220.667
+// alım yapılmış görünüyordu, çünkü parayı oraya taşıyan hareket kaydedilemiyordu.
+describe('transfer', () => {
+  const FX = { TRY: 1, USD: 40 }
+  const T = (from, to, amount, over = {}) => ({
+    id: `tr-${from}-${to}-${amount}`, type: 'transfer', assetType: 'cash', symbol: 'CASH',
+    portfolioId: from, toPortfolioId: to, quantity: 1, price: amount, fee: 0,
+    currency: 'TRY', date: '2026-03-01', ...over,
+  })
+  const D = (pid, amount, over = {}) => ({
+    id: `d-${pid}-${amount}`, type: 'deposit', assetType: 'cash', symbol: 'CASH',
+    portfolioId: pid, quantity: 1, price: amount, fee: 0, currency: 'TRY',
+    date: '2026-01-01', ...over,
+  })
+
+  it('kaynaktan duser, hedefe ekler', () => {
+    const cash = computeCashByPortfolio([D('kasa', 1000), T('kasa', 't3', 400)], FX)
+    expect(cash.get('kasa')).toBe(600)
+    expect(cash.get('t3')).toBe(400)
+  })
+
+  // En onemli invaryant: transfer para yaratmaz, yok etmez. Tek tarafli
+  // islenirse hicbir hata cikmaz — sadece toplam varlik yanlis olur.
+  it('toplam uzerinde etkisi SIFIR', () => {
+    const before = computeCashByPortfolio([D('kasa', 1000)], FX)
+    const after = computeCashByPortfolio([D('kasa', 1000), T('kasa', 't3', 400)], FX)
+    const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0)
+    expect(sum(after)).toBeCloseTo(sum(before))
+  })
+
+  // Masrafi transferi yapan taraf oder; hedefe eksik para varir. Ikisinden de
+  // dusmek parayi yoktan var etmek, hedefe tam yazip kaynaktan da dusmek ise
+  // parayi yok etmek olurdu.
+  it('masraf yalnizca kaynaktan duser', () => {
+    const cash = computeCashByPortfolio([D('kasa', 1000), T('kasa', 't3', 400, { fee: 10 })], FX)
+    expect(cash.get('kasa')).toBe(590)
+    expect(cash.get('t3')).toBe(400)
+  })
+
+  it('doviz cinsinden transfer kur uzerinden cevrilir', () => {
+    const cash = computeCashByPortfolio(
+      [D('kasa', 100, { currency: 'USD' }), T('kasa', 'amerika', 60, { currency: 'USD' })], FX,
+    )
+    expect(cash.get('kasa')).toBe(1600)      // (100-60) × 40
+    expect(cash.get('amerika')).toBe(2400)   // 60 × 40
+  })
+
+  // Hedef portfoyun nakit AKISINDA da gorunmeli. Yalnizca kaynaga yazilsaydi,
+  // hedef parayi hic almamis gibi gorunur ve nakdi haksiz yere eksiye duserdi —
+  // yani duzeltmek icin ekledigimiz ozellik, duzeltmeye calistigi uyariyi
+  // uretirdi.
+  it('hedef portfoyun nakdini eksiye dusurmez', () => {
+    const txns = [
+      D('kasa', 1000),
+      T('kasa', 't3', 500),
+      { id:'b1', type:'buy', assetType:'bist', symbol:'X', portfolioId:'t3',
+        quantity:10, price:40, fee:0, currency:'TRY', date:'2026-04-01' },
+    ]
+    const runs = computeCashRuns(txns, FX, '2026-06-01')
+    expect(runs.filter((r) => r.portfolioId === 't3')).toEqual([])
+  })
+
+  it('para birimi bazinda da iki bacagi da isler', () => {
+    const txns = [D('kasa', 1000), T('kasa', 't3', 400)]
+    expect(computeCashByCurrency(txns, 'kasa').get('TRY')).toBe(600)
+    expect(computeCashByCurrency(txns, 't3').get('TRY')).toBe(400)
+    expect(computeCashByCurrency(txns).get('TRY')).toBe(1000)   // net etki sifir
+  })
+})
+
+describe('baslangic bakiyesi (opening)', () => {
+  const FX = { TRY: 1 }
+  const O = (pid, amount) => ({
+    id:`o-${pid}`, type:'opening', assetType:'cash', symbol:'CASH', portfolioId:pid,
+    quantity:1, price:amount, fee:0, currency:'TRY', date:'2023-01-01',
+  })
+
+  it('nakde para yatirma gibi girer', () => {
+    expect(computeCashByPortfolio([O('t3', 50000)], FX).get('t3')).toBe(50000)
+  })
+
+  // Iki yillik bilinmeyen fonlamayi tek satira indiriyor. Katki sayilsaydi o ay
+  // devasa bir tasarruf ayi gibi gorunur ve FIRE tahminini bozardi.
+  it('TASARRUF sayilmaz', () => {
+    const withOpening = computeFireMetrics([O('t3', 500000)], {}, FX, 6)
+    expect(withOpening.avgMonthlySavingsTRY).toBe(0)
+  })
+})

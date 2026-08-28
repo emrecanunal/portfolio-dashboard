@@ -118,3 +118,37 @@ describe('ayar cevirisi', () => {
     expect(settingsFromDb('metin')).toEqual({})
   })
 })
+
+// Transferin hedefi cevirinin iki yaninda da hayatta kalmali. Dusmesi hicbir
+// hata uretmez: para kaynaktan cikar, hicbir yere varmaz, ve toplam varlik
+// sessizce azalir.
+describe('transfer cevirisi', () => {
+  const TR = {
+    id: 'tr-1', portfolioId: 'kasa', toPortfolioId: 'sub-t3',
+    type: 'transfer', assetType: 'cash', symbol: 'CASH',
+    quantity: 1, price: 50000, fee: 0, currency: 'TRY',
+    date: '2026-03-01', notes: '',
+  }
+
+  it('gidip gelince ayni nesne', () => {
+    expect(txFromDb(txToDb(TR, 'u'))).toEqual(TR)
+  })
+
+  it('hedef snake_case olarak gider', () => {
+    expect(txToDb(TR, 'u').to_portfolio_id).toBe('sub-t3')
+  })
+
+  // PostgREST toplu eklemede her satirin ayni anahtar kumesini istiyor
+  // (PGRST102). Transferi olmayan satirlarda alani undefined birakmak, o
+  // satirlari farkli sekle sokup TUM yazmayi reddettirirdi.
+  it('transfer olmayan satirda alan yine var, degeri null', () => {
+    const db = txToDb({ ...TR, type: 'buy', toPortfolioId: undefined }, 'u')
+    expect('to_portfolio_id' in db).toBe(true)
+    expect(db.to_portfolio_id).toBeNull()
+  })
+
+  it('null hedef uygulama nesnesine sizmaz', () => {
+    expect(txFromDb(txToDb({ ...TR, toPortfolioId: undefined }, 'u')))
+      .not.toHaveProperty('toPortfolioId')
+  })
+})

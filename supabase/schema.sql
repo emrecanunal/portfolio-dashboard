@@ -76,6 +76,12 @@ create table if not exists public.portfolios (
   name       text        not null,
   color      text        not null default '#10b981',
   sort_order integer     not null default 0,
+
+  -- Kasa: paranın girip çıktığı yer. Sıradan bir portföy gibi durur ama işi
+  -- yatırım yapmak değil, henüz yatırılmamış parayı tutmak — o yüzden getiri
+  -- karşılaştırmalarında "%0 getirili portföy" olarak listeyi kirletmemesi
+  -- gerekiyor. Bayrak tam olarak bunun için: arayüz farklı davranabilsin diye.
+  is_cash_account boolean not null default false,
   updated_at timestamptz not null default now(),
   -- Mezar taşı. Satır fiziksel silinirse silme bilgisi senkronlanamaz ve
   -- kayıt diğer cihazdan geri dirilir.
@@ -92,7 +98,15 @@ create table if not exists public.transactions (
   -- ayrışırsa, ayrışma sessiz kalmaz ama geç kalır: kullanıcı işlemi girer,
   -- uygulamada görür, ve o satır senkronda check ihlaliyle sonsuza kadar
   -- takılı kalır. Yeni bir işlem tipi eklerken burası da güncellenmeli.
-  type         text        not null check (type in ('buy', 'sell', 'deposit', 'withdraw', 'exchange')),
+  --   transfer : iki alt portföy arasında nakit. İKİ bacağı olan tek satır —
+  --              kaynak portfolio_id, hedef to_portfolio_id. Toplam varlığı
+  --              değiştirmez, yalnızca nerede durduğunu.
+  --   opening  : başlangıç bakiyesi. Nakit açısından para yatırma gibi davranır
+  --              ama TASARRUF SAYILMAZ (calculations.js · contributedUpTo).
+  --              İşlem geçmişi 2023'e, fonlama geçmişi 2025'e dayandığı için
+  --              var: aradaki on dokuz ayı uydurmak yerine bir başlangıç
+  --              noktası ilan ediyor.
+  type         text        not null check (type in ('buy', 'sell', 'deposit', 'withdraw', 'exchange', 'transfer', 'opening')),
   asset_type   text        not null check (asset_type in ('bist', 'tefas', 'global', 'cash')),
   symbol       text        not null,
   quantity     numeric     not null,
@@ -107,6 +121,12 @@ create table if not exists public.transactions (
   trade_date   date        not null,
 
   notes        text        not null default '',
+
+  -- Yalnızca transfer'de dolu. Yabancı anahtar YOK ve bu kasıtlı: portföy silme
+  -- akışı işlemleri de siliyor, hedefe konan bir kısıt o akışı kilitlerdi.
+  -- Bütünlüğü istemci tarafındaki doğrulama koruyor (dataExport.js).
+  to_portfolio_id text,
+
   updated_at   timestamptz not null default now(),
   deleted_at   timestamptz,
 
@@ -192,6 +212,27 @@ create table if not exists public.fx_monthly (
   rate  numeric not null,
   primary key (base, quote, month)
 );
+
+
+-- ---------------------------------------------------------------------------
+-- 3.5 Mevcut kurulumlara eklenenler
+--
+-- `create table if not exists` VAR OLAN bir tabloya yeni kolon EKLEMEZ — sessizce
+-- atlar. Yani yukarıdaki tanımlar yalnızca sıfırdan kurulumda geçerli; şema
+-- zaten kuruluysa buradaki ifadeler olmadan yeni alanlar hiç oluşmaz ve
+-- uygulama, veritabanının tanımadığı bir kolona yazmaya çalışır.
+--
+-- Bunlar da yeniden çalıştırılabilir: `if not exists` / `drop ... if exists`.
+-- ---------------------------------------------------------------------------
+
+alter table public.transactions add column if not exists to_portfolio_id text;
+alter table public.portfolios   add column if not exists is_cash_account boolean not null default false;
+
+-- Kısıt YENİDEN kuruluyor, çünkü eskisi 'transfer' ve 'opening'i tanımıyor ve
+-- bir check kısıtı yerinde güncellenemiyor. Sıra önemli: önce düşür, sonra ekle.
+alter table public.transactions drop constraint if exists transactions_type_check;
+alter table public.transactions add constraint transactions_type_check
+  check (type in ('buy', 'sell', 'deposit', 'withdraw', 'exchange', 'transfer', 'opening'));
 
 
 -- ---------------------------------------------------------------------------

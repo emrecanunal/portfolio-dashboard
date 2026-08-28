@@ -54,7 +54,7 @@ export function exportJsonBackup(state) {
 // schema, and one malformed row is enough to make a downstream figure wrong
 // while still looking entirely plausible. So nothing is trusted here.
 
-const TXN_TYPES = ['buy', 'sell', 'deposit', 'withdraw', 'exchange']
+const TXN_TYPES = ['buy', 'sell', 'deposit', 'withdraw', 'exchange', 'transfer', 'opening']
 const ASSET_TYPES = ['bist', 'tefas', 'global', 'cash']
 
 // Settings that describe the USER and belong in a backup.
@@ -97,6 +97,25 @@ export function validateTransaction(tx, knownPortfolioIds = null) {
   if (!isPositiveNumber(tx.quantity)) problems.push('quantity')
   if (!isPositiveNumber(tx.price)) problems.push('price')
   if (tx.fee != null && !isPositiveNumber(tx.fee)) problems.push('fee')
+
+  // Transferin hedefi olmadan yarısı yok: para kaynaktan çıkar ve hiçbir yere
+  // varmaz. Uygulama toplamı korumak zorunda, o yüzden bu satır kabul edilemez.
+  if (tx.type === 'transfer') {
+    if (!isNonEmptyString(tx.toPortfolioId)) {
+      problems.push('toPortfolioId')
+    } else if (tx.toPortfolioId === tx.portfolioId) {
+      // Kendine transfer bir işlem değil, bir yazım hatası — ve hiçbir etkisi
+      // olmadığı için fark edilmeden kitapta durur.
+      problems.push('toPortfolioId')
+    }
+    if (
+      knownPortfolioIds &&
+      isNonEmptyString(tx.toPortfolioId) &&
+      !knownPortfolioIds.has(tx.toPortfolioId)
+    ) {
+      problems.push('toPortfolioId')
+    }
+  }
 
   if (tx.type === 'exchange') {
     // Both sides are required: computeCashByCurrency debits `quantity` from one
