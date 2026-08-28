@@ -295,3 +295,71 @@ describe('setOpeningBalance', () => {
     expect(openings()).toHaveLength(2)
   })
 })
+
+// ÇİFT ID — 28 AĞUSTOS 2026'DA KAYBEDİLEN 39 İŞLEM
+//
+// Sunucudaki birincil anahtar (user_id, id). Aynı id'yi taşıyan iki satır
+// gönderildiğinde ikincisi birincinin üstüne yazılıyor ve bir sonraki çekişte o
+// tek satır yereldeki diğerinin de üstüne iniyor. Kaybın görünür hiçbir belirtisi
+// yok: senkron "başarılı" diyor, uygulama açılıyor, yalnızca 39 işlem yok.
+//
+// Gerçekte olan buydu: içe aktarım betiği iki Investing.com dosyasına da 'inv'
+// önekini verdi, T3'ün CRDFA alışı ile Amerika'nın TEM satışı aynı `inv-39`
+// id'sini paylaştı, ve T3'ün 28 pozisyonunun tamamı yok oldu.
+describe('cift id korumasi', () => {
+  const dedupe = () => usePortfolioStore.getState().dedupeIds()
+
+  it('cakisan ikinci satira yeni id verir', () => {
+    seed({ transactions: [TX('inv-39'), TX('inv-39', { symbol: 'TEM', portfolioId: 'p2' })] })
+    expect(dedupe()).toBe(1)
+    const rows = usePortfolioStore.getState().transactions
+    expect(rows).toHaveLength(2)
+    expect(new Set(rows.map((r) => r.id)).size).toBe(2)
+    // Id'yi ILK satir tutuyor: sunucuda o id zaten varsa, hangi icerigi
+    // tasidigina bakmaksizin ikisi de gonderilecek.
+    expect(rows[0].id).toBe('inv-39')
+    expect(rows[1].id).not.toBe('inv-39')
+  })
+
+  it('hicbir satir kaybolmaz — sayi korunur', () => {
+    const many = Array.from({ length: 39 }, (_, i) => TX(`inv-${i}`))
+    const clash = Array.from({ length: 39 }, (_, i) => TX(`inv-${i}`, { symbol: 'X', portfolioId: 'p2' }))
+    seed({ transactions: [...many, ...clash] })
+    expect(dedupe()).toBe(39)
+    const rows = usePortfolioStore.getState().transactions
+    expect(rows).toHaveLength(78)
+    expect(new Set(rows.map((r) => r.id)).size).toBe(78)
+  })
+
+  // Yalnizca yeni id'yi gondermek yetmezdi: sunucudaki mevcut satir hangisinin
+  // icerigini tasiyor bilmiyoruz. Ikisini de kirli isaretlemek bunu kesinlestiriyor.
+  it('cakisan satirlarin IKISI de outbox a girer', () => {
+    seed({ transactions: [TX('dup'), TX('dup', { symbol: 'TEM' })] })
+    dedupe()
+    const { transactions: rows, outbox } = usePortfolioStore.getState()
+    expect(outbox.transactions[rows[0].id]).toBe('upsert')
+    expect(outbox.transactions[rows[1].id]).toBe('upsert')
+  })
+
+  it('portfoylerde de calisir', () => {
+    seed({
+      transactions: [],
+      subPortfolios: [{ id: 'p1', name: 'A' }, { id: 'p1', name: 'B' }],
+    })
+    expect(dedupe()).toBe(1)
+    const ps = usePortfolioStore.getState().subPortfolios
+    expect(new Set(ps.map((p) => p.id)).size).toBe(2)
+    expect(ps.map((p) => p.name)).toEqual(['A', 'B'])
+  })
+
+  // Temiz veride hicbir sey yapmamali: her turda cagriliyor ve her turda
+  // state'i yeniden yazsaydi, outbox'i gereksiz yere sisirir ve abone olan her
+  // bilesen bosuna render alirdi.
+  it('temiz veride state e dokunmaz', () => {
+    seed({ transactions: [TX('a'), TX('b')] })
+    const before = usePortfolioStore.getState().transactions
+    expect(dedupe()).toBe(0)
+    expect(usePortfolioStore.getState().transactions).toBe(before)
+    expect(usePortfolioStore.getState().outbox.transactions).toEqual({})
+  })
+})

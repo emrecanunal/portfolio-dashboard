@@ -277,6 +277,58 @@ export const usePortfolioStore = create(
       setSyncStatus: (status, error = null) =>
         set((s) => ({ syncMeta: { ...s.syncMeta, status, lastError: error } })),
 
+      // ÇİFT ID: SUNUCUYA GİTMEDEN ÖNCE YAKALA
+      //
+      // Sunucudaki birincil anahtar (user_id, id). Aynı id'yi taşıyan iki yerel
+      // satır gönderildiğinde sunucu ikisini birden saklayamıyor: ikincisi
+      // birincinin ÜSTÜNE yazıyor. Sonraki çekişte o tek satır aşağı iniyor ve
+      // yereldeki diğerinin de üstüne yazıyor. Veri sessizce yok oluyor — hata
+      // yok, senkron "başarılı" diyor.
+      //
+      // 28 Ağustos 2026'da tam olarak bu oldu: içe aktarım betiği iki
+      // Investing.com dosyasına da 'inv' önekini vermişti, 39 id çakışıyordu, ve
+      // T3'ün 28 pozisyonunun tamamı Amerika satırlarının altında kaldı.
+      //
+      // Çakışmayı içe aktarım kapısında düzeltmiştik. Ama o kapıdan geçmeyen
+      // yollar var: düzeltmeden önce alınmış bir yedeği geri yüklemek, ya da o
+      // günlerden kalma bir cihazın ilk senkronu. Bu yüzden kontrol GÖNDERİMİN
+      // hemen önünde duruyor — veri hangi yoldan gelirse gelsin buradan geçiyor.
+      //
+      // Id'yi İLK satır tutuyor, sonrakiler yeni id alıyor. İkisi de kirli
+      // işaretleniyor: sunucudaki mevcut satırın hangisinin içeriğini taşıdığını
+      // bilmiyoruz, ikisini birden göndermek bunu kesinleştiriyor.
+      dedupeIds: () => {
+        const s = get()
+        let renamed = 0
+        const outbox = {
+          ...s.outbox,
+          transactions: { ...s.outbox.transactions },
+          portfolios: { ...s.outbox.portfolios },
+        }
+
+        const rebuild = (rows, kind) => {
+          const seen = new Set()
+          return rows.map((row) => {
+            if (!seen.has(row.id)) {
+              seen.add(row.id)
+              return row
+            }
+            const id = crypto.randomUUID()
+            outbox[kind][row.id] = 'upsert'   // id'yi tutmaya devam eden satır
+            outbox[kind][id] = 'upsert'       // yeni id alan satır
+            renamed++
+            return { ...row, id }
+          })
+        }
+
+        const transactions = rebuild(s.transactions, 'transactions')
+        const subPortfolios = rebuild(s.subPortfolios, 'portfolios')
+
+        if (!renamed) return 0
+        set({ transactions, subPortfolios, outbox })
+        return renamed
+      },
+
       /** Her şeyi kirli işaretle — ilk senkron ve "baştan gönder" için. */
       markEverythingDirty: () =>
         set((s) => {

@@ -64,6 +64,15 @@ async function runSync(userId) {
       store.markEverythingDirty()
     }
 
+    // Çift id kontrolü gönderimden ÖNCE, her turda. Sunucudaki anahtar
+    // (user_id, id) olduğu için çakışan iki satırdan biri diğerinin üstüne
+    // yazılır ve bir sonraki çekişte yereldeki de silinir — sessizce. Burası o
+    // veriyi kaybetmeden önceki son nokta. Ucuz: id kümesi zaten bellekte.
+    const renamed = usePortfolioStore.getState().dedupeIds()
+    if (renamed) {
+      console.warn(`[sync] ${renamed} çakışan id yeniden adlandırıldı; gönderim öncesi düzeltildi.`)
+    }
+
     const pushed = await pushOutbox(userId)
     if (!pushed.ok) return fail(pushed.error)
 
