@@ -53,6 +53,19 @@ export function sendMagicLink(email) {
   return supabase.sendMagicLink(email)
 }
 
+/**
+ * E-posta + parola ile giriş. Hiçbir e-posta gönderilmez.
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export function signInWithPassword(email, password) {
+  return supabase.signInWithPassword(email, password)
+}
+
+/** Açık oturuma parola atar/değiştirir. Eski parola gerekmez. */
+export function setPassword(password) {
+  return supabase.setPassword(password)
+}
+
 /** Oturumu kapatır ve yerel oturum belirtecini siler. */
 export function signOut() {
   return supabase.signOut()

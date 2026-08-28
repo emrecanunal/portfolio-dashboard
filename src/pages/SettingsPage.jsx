@@ -7,7 +7,7 @@ import { historyCoverage } from '../lib/history.js'
 import { computeHoldings } from '../lib/calculations.js'
 import { exportJsonBackup, parseJsonBackup, exportTransactionsCsv } from '../lib/dataExport.js'
 import { persistenceStatus, isInstalled, daysSince, backupIsStale } from '../lib/persistence.js'
-import { isBackendConfigured, getSession, signOut } from '../lib/backend/index.js'
+import { isBackendConfigured, getSession, signOut, setPassword } from '../lib/backend/index.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
 import { Modal } from '../components/ui/Modal.jsx'
@@ -1519,8 +1519,71 @@ function AccountCard() {
             <SyncLabel meta={syncMeta} pending={pending} t={t} ti={ti} />
           </span>
         </div>
+
+        <PasswordSetter t={t} />
       </CardBody>
     </Card>
+  )
+}
+
+// Açık oturumu kullanarak parola atar.
+//
+// NEDEN BURADA, GİRİŞ EKRANINDA DEĞİL
+//
+// Magic link ile açılmış bir hesabın parolası yoktur, ve parolayı e-posta
+// göndermeden atmanın tek yolu zaten girişli olmaktır. Yani bu, e-posta
+// limitine takılmış birinin kendini kurtarma yolu: hâlâ açık olan oturumdan
+// parolayı belirler, bir daha o limite hiç dokunmaz.
+//
+// Eski parola sorulmuyor çünkü ortada eski parola olmayabilir. Yetki, oturumun
+// kendisi.
+function PasswordSetter({ t }) {
+  const [value, setValue] = useState('')
+  const [state, setState] = useState('idle')   // idle | saving | saved | error
+  const [error, setError] = useState('')
+
+  async function save(e) {
+    e.preventDefault()
+    if (value.length < 8) {
+      setState('error')
+      setError(t.auth.passwordTooShort)
+      return
+    }
+    setState('saving')
+    const r = await setPassword(value)
+    if (r.ok) {
+      setState('saved')
+      setValue('')   // ekranda parola bırakmıyoruz
+    } else {
+      setState('error')
+      setError(r.error || '')
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="mt-4 pt-3 border-t border-border-subtle">
+      <div className="text-sm text-text-primary">{t.auth.setPassword}</div>
+      <div className="text-2xs text-text-tertiary mt-0.5 mb-2">{t.auth.setPasswordDesc}</div>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={value}
+          onChange={(e) => { setValue(e.target.value); setState('idle') }}
+          placeholder={t.auth.newPassword}
+          className="flex-1 px-3 py-2 rounded-lg bg-bg-tertiary border border-border-default
+                     text-sm text-text-primary placeholder:text-text-muted
+                     focus:outline-none focus:ring-2 focus:ring-accent/40 transition-all"
+        />
+        <Button type="submit" variant="ghost" size="sm" disabled={state === 'saving'}>
+          {t.auth.savePassword}
+        </Button>
+      </div>
+      {state === 'saved' && <p className="mt-2 text-2xs text-success">{t.auth.passwordSaved}</p>}
+      {state === 'error' && (
+        <p className="mt-2 text-2xs text-danger">{t.auth.passwordFailed}{error ? ` — ${error}` : ''}</p>
+      )}
+    </form>
   )
 }
 

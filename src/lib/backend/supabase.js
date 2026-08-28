@@ -71,6 +71,49 @@ export async function sendMagicLink(email) {
   }
 }
 
+/**
+ * E-posta + parola ile giriş.
+ *
+ * NEDEN MAGIC LINK'İN YANINA BU DA GELDİ
+ *
+ * Supabase'in yerleşik e-posta servisi SAATTE 2 mesaj gönderiyor ve yalnızca
+ * proje ekibindeki adreslere ulaşıyor. Tek kullanıcı için bile dar: iki cihazda
+ * arka arkaya giriş denemek limiti bitiriyor ve bir saat kilitli kalıyorsun.
+ *
+ * Parola bunu tamamen atlıyor — hiçbir e-posta gönderilmiyor. Magic link
+ * kaldırılmadı, çünkü davet akışı için doğru yol hâlâ o: yeni bir kullanıcıya
+ * "önce şu parolayı belirle" diyemezsin.
+ */
+export async function signInWithPassword(email, password) {
+  const c = getClient()
+  if (!c) return { ok: false, error: 'not-configured' }
+  try {
+    const { error } = await c.auth.signInWithPassword({ email, password })
+    return error ? { ok: false, error: error.message } : { ok: true }
+  } catch (e) {
+    return { ok: false, error: e?.message || 'network' }
+  }
+}
+
+/**
+ * Açık oturuma parola atar ya da değiştirir.
+ *
+ * Mevcut oturumu kullanıyor, yani ne eski parolayı ne de bir e-posta
+ * doğrulamasını gerektiriyor. Magic link ile açılmış, parolası hiç olmamış bir
+ * hesap için de çalışıyor — bu, e-posta limitine takılmış birinin kendini
+ * kurtarmasının yolu.
+ */
+export async function setPassword(password) {
+  const c = getClient()
+  if (!c) return { ok: false, error: 'not-configured' }
+  try {
+    const { error } = await c.auth.updateUser({ password })
+    return error ? { ok: false, error: error.message } : { ok: true }
+  } catch (e) {
+    return { ok: false, error: e?.message || 'network' }
+  }
+}
+
 export async function signOut() {
   const c = getClient()
   if (!c) return { ok: false, error: 'not-configured' }
