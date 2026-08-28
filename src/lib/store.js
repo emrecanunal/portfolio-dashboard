@@ -263,6 +263,29 @@ export const usePortfolioStore = create(
           outbox: { ...s.outbox, settings: true },
         })),
 
+      /**
+       * İmleci sıfırla: bir sonraki çekme HER ŞEYİ baştan alsın.
+       *
+       * NEDEN GEREKLİ
+       *
+       * İmleç yalnızca ileri gidiyor. Bir satırın updated_at'i bir kez imlecin
+       * gerisinde kalırsa o cihaz onu BİR DAHA ASLA çekmez — schema.sql §1'de
+       * anlatılan üst üste binen işlem tehlikesi tam olarak bu ve 30 saniyelik
+       * gecikme onu yalnızca DARALTIYOR, kapatmıyor. Yüzlerce satır gönderen
+       * bir geri yükleme o pencereyi rahatça aşıyor.
+       *
+       * Sonuç, 28 Ağustos'ta bir telefonda görüldü: Amerika'nın satış işlemleri
+       * hiç gelmedi, pozisyonlar açık kaldı, nakit eksiye düştü ve sıfıra
+       * kırpıldı. Sunucu doğruydu, cihaz yanlıştı ve kullanıcının yapabileceği
+       * hiçbir şey yoktu — çıkış yapmak bile yerel veriyi bırakıyor.
+       *
+       * OUTBOX'A DOKUNULMUYOR. Gönderilmemiş yerel değişiklikler kutuda kalır,
+       * mergeRows kirli satırların üstüne yazmaz: tam çekme yalnızca eksiği
+       * tamamlar, bekleyen düzenlemeyi geri almaz.
+       */
+      resetSyncCursor: () =>
+        set((s) => ({ syncMeta: { ...s.syncMeta, cursor: null, lastError: null } })),
+
       // === SENKRON ===
       //
       // Bu dördünü yalnızca sync.js çağırır. Store'da durmalarının sebebi tek

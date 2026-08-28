@@ -8,6 +8,7 @@ import { computeHoldings } from '../lib/calculations.js'
 import { exportJsonBackup, parseJsonBackup, exportTransactionsCsv } from '../lib/dataExport.js'
 import { persistenceStatus, isInstalled, daysSince, backupIsStale } from '../lib/persistence.js'
 import { isBackendConfigured, getSession, signOut, setPassword } from '../lib/backend/index.js'
+import { syncNow } from '../lib/sync.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
 import { Modal } from '../components/ui/Modal.jsx'
@@ -1525,6 +1526,8 @@ function AccountCard() {
   const [user, setUser] = useState(undefined)
   const syncMeta = usePortfolioStore((s) => s.syncMeta)
   const outbox = usePortfolioStore((s) => s.outbox)
+  const resetSyncCursor = usePortfolioStore((s) => s.resetSyncCursor)
+  const [refetching, setRefetching] = useState(false)
 
   useEffect(() => {
     if (!isBackendConfigured()) return
@@ -1559,10 +1562,28 @@ function AccountCard() {
 
         <div className="mt-4 pt-3 border-t border-border-subtle flex items-center gap-2">
           <SyncDot status={syncMeta.status} pending={pending} />
-          <span className="text-2xs text-text-tertiary">
+          <span className="text-2xs text-text-tertiary flex-1 min-w-0">
             <SyncLabel meta={syncMeta} pending={pending} t={t} ti={ti} />
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            disabled={refetching || syncMeta.status === 'syncing'}
+            onClick={async () => {
+              setRefetching(true)
+              resetSyncCursor()
+              try {
+                await syncNow(user.id)
+              } finally {
+                setRefetching(false)
+              }
+            }}
+          >
+            {refetching ? t.auth.refetching : t.auth.refetchAll}
+          </Button>
         </div>
+        <p className="mt-1.5 text-2xs text-text-tertiary">{t.auth.refetchHint}</p>
 
         <PasswordSetter t={t} />
       </CardBody>

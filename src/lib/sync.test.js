@@ -363,3 +363,44 @@ describe('cift id korumasi', () => {
     expect(usePortfolioStore.getState().outbox.transactions).toEqual({})
   })
 })
+
+// İmleç yalnızca ileri gidiyor, ve bu tek yönlülük bir cihazı kalıcı olarak
+// eksik bırakabiliyor: bir satırın updated_at'i bir kez imlecin gerisinde
+// kalırsa (schema.sql §1 · üst üste binen işlemler; 30 saniyelik gecikme o
+// pencereyi daraltıyor ama kapatmıyor, yüzlerce satırlık bir geri yükleme
+// rahatça aşıyor) o satır o cihaza bir daha HİÇ gelmiyor.
+//
+// 28 Ağustos'ta bir telefon Amerika'nın satışlarını bu yüzden hiç görmedi:
+// pozisyonlar açık kaldı, nakit eksiye düşüp sıfıra kırpıldı, sunucu doğruydu
+// ve kullanıcının elinde düzeltecek hiçbir araç yoktu. resetSyncCursor o aracı
+// veriyor — ama bekleyen gönderimleri yakmadan.
+describe('resetSyncCursor', () => {
+  it('clears the cursor so the next pull starts from the beginning', () => {
+    usePortfolioStore.setState({
+      syncMeta: { cursor: '2026-08-28T20:00:00.000Z', lastSyncAt: 'x', lastError: 'bir hata', status: 'idle' },
+    })
+
+    usePortfolioStore.getState().resetSyncCursor()
+
+    const { syncMeta } = usePortfolioStore.getState()
+    expect(syncMeta.cursor).toBeNull()
+    expect(syncMeta.lastError).toBeNull()
+    // Son eşitleme anı bir GEÇMİŞ kaydı; imleci sıfırlamak onu yaşanmamış
+    // yapmaz ve ekrandaki "en son ne zaman" satırını boşaltmamalı.
+    expect(syncMeta.lastSyncAt).toBe('x')
+  })
+
+  it('leaves the outbox alone — unsent local work must still go up', () => {
+    usePortfolioStore.setState({
+      outbox: { transactions: { 'tx-1': 'upsert' }, portfolios: { 'p-1': 'delete' }, settings: true },
+      syncMeta: { cursor: '2026-08-28T20:00:00.000Z', lastSyncAt: null, lastError: null, status: 'idle' },
+    })
+
+    usePortfolioStore.getState().resetSyncCursor()
+
+    const { outbox } = usePortfolioStore.getState()
+    expect(outbox.transactions['tx-1']).toBe('upsert')
+    expect(outbox.portfolios['p-1']).toBe('delete')
+    expect(outbox.settings).toBe(true)
+  })
+})
