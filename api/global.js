@@ -1,135 +1,48 @@
-// Global equity price fetcher via Stooq (stooq.com).
+// Global hisse fiyatları — Finnhub, sunucudaki anahtarla.
 //
-// Why Stooq:
-//   - Free, no API key, no signup, no CORS issues (we proxy server-side)
-//   - End-of-day data — perfect for portfolio tracking (not day-trading)
-//   - Used by many open-source portfolio tools and pandas-datareader
-//   - Symbol convention: "AAPL.US" (US ticker + ".US" suffix)
+// BU DOSYA NE İDİ, NE OLDU
 //
-// Endpoint:
-//   GET https://stooq.com/q/l/?s={symbol}&i=d&f=sd2t2ohlcvn&h&e=csv
-//   Note: single-symbol queries only — batch returns N/D for unclear reasons
+// Eskiden Stooq'a bağlıydı: bedava, anahtarsız, gün sonu verisi. Stooq ücretsiz
+// CSV ucunu **Mart 2026'da kapattı** ve bu uç nokta o günden beri hiçbir işe
+// yaramıyordu — ama dosyanın başındaki yorum hâlâ Stooq'u anlatıyordu, ki bu
+// ölü koddan daha kötüsü: yanlış yönlendiren ölü kod.
 //
-// Returns CSV like:
-//   Symbol,Date,Time,Open,High,Low,Close,Volume,Name
-//   AAPL.US,2026-05-07,22:00:22,289.27,292.13,285.78,287.44,45224300,APPLE INC
+// Boşluğu istemci doldurmuştu: kullanıcı kendi Finnhub anahtarını Ayarlar'a
+// giriyor, tarayıcı doğrudan finnhub.io'ya gidiyordu. O çözümün üç sorunu vardı
+// — her yeni cihaza anahtarı elle girmek, anahtarın tarayıcının ağ isteklerinde
+// açıkta durması, ve her cihazın aynı sembolü ayrı ayrı çekerek kotayı kullanıcı
+// sayısıyla çarpması.
 //
-// We call Stooq once per symbol IN PARALLEL since each request is independent.
-// Stooq's daily quota is generous for personal use (no documented limit, but
-// "Exceeded the daily hits limit" appears at very high call counts).
+// Faz 3 anahtarı sunucuya taşıdı. Artık burası da onu kullanıyor, yani:
+//
+//   - Tarayıcıda anahtar diye bir şey kalmadı.
+//   - Lokal geliştirme (.env.local + dev-proxy) global fiyatları görebiliyor.
+//   - Sunucusuz "yalnız-yerel" kip çalışmaya devam ediyor: istemci /api/global'ı
+//     anahtarsız çağırıyor, anahtar sunucunun kendisinde.
+//
+// refresh-prices.js'ten FARKI: orası sonucu prices_latest'e YAZAR ve zamanlayıcı
+// onu çağırır. Burası hiçbir şey yazmaz, yalnızca okur. İkisi aynı fetch
+// katmanını (_finnhub.js) paylaşıyor — Finnhub davranışı tek yerde tarif edili.
 
-import { fetchWithTimeout, setCacheHeaders, applyCors, parseSymbols } from './_http.js'
+import { fetchGlobalQuotes } from './_finnhub.js'
+import { setCacheHeaders, applyCors, parseSymbols } from './_http.js'
 
-const UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
-
-async function fetchOne(symbol) {
-  // Stooq symbol rules for US equities:
-  //   - Suffix ".US" is required (e.g. AAPL → aapl.us)
-  //   - Class-share dots become dashes (BRK.B → brk-b.us, BF.B → bf-b.us, RDS.A → rds-a.us)
-  //   - Already-suffixed symbols (e.g. "AAPL.US") are passed through lowercased
-  const lower = symbol.toLowerCase()
-  let stooqSymbol
-  if (lower.endsWith('.us') || lower.endsWith('.uk') || lower.endsWith('.de') || lower.endsWith('.jp')) {
-    // Caller already provided an exchange suffix
-    stooqSymbol = lower
-  } else if (lower.includes('.')) {
-    // Class-share ticker like brk.b → brk-b.us
-    stooqSymbol = `${lower.replace(/\./g, '-')}.us`
-  } else {
-    stooqSymbol = `${lower}.us`
-  }
-  const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=d&f=sd2t2ohlcvn&h&e=csv`
-
-  const res = await fetchWithTimeout(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'text/csv,*/*',
-    },
-  })
-
-  if (!res.ok) {
-    throw new Error(`Stooq HTTP ${res.status}`)
-  }
-
-  const text = await res.text()
-  const lines = text.trim().split('\n')
-
-  if (lines.length < 2) {
-    throw new Error('NO_DATA')
-  }
-
-  // Detect rate limit
-  if (text.toLowerCase().includes('exceeded')) {
-    throw new Error('RATE_LIMIT')
-  }
-
-  // Parse CSV: header line then data line
-  // Format: Symbol,Date,Time,Open,High,Low,Close,Volume,Name
-  const data = lines[1].split(',')
-  if (data.length < 8) {
-    throw new Error('BAD_CSV')
-  }
-
-  const [, , , openStr, highStr, lowStr, closeStr, volumeStr, nameStr] = data
-  const close = parseFloat(closeStr)
-  const open = parseFloat(openStr)
-
-  // Stooq returns "N/D" when there's no data for the symbol
-  if (closeStr === 'N/D' || !isFinite(close) || close <= 0) {
-    throw new Error('NOT_FOUND')
-  }
-
-  // Day change uses today's open as the reference point. This matches what
-  // most users expect from a "daily change" indicator on EOD data.
-  const previousClose = isFinite(open) && open > 0 ? open : close
-  const dayChangePct = previousClose > 0 ? ((close - previousClose) / previousClose) * 100 : 0
-
-  return {
-    symbol,
-    price: close,
-    currency: 'USD',
-    previousClose,
-    dayChangePct,
-    name: nameStr ? nameStr.trim() : null,
-  }
-}
-
-// Common handler — parallel fetches with a small concurrency cap
 async function handle(symbolsParam) {
-  const parsed = parseSymbols(symbolsParam, 30)
+  const parsed = parseSymbols(symbolsParam, 40)
   if (parsed.error) return { results: {}, errors: [{ symbol: '', error: parsed.error }] }
-  const symbols = parsed.symbols
 
-  const results = {}
-  const errors = []
-
-  // Concurrency: 5 in flight at a time — fast enough, polite to Stooq
-  const BATCH = 5
-  for (let i = 0; i < symbols.length; i += BATCH) {
-    const batch = symbols.slice(i, i + BATCH)
-    const settled = await Promise.allSettled(batch.map(fetchOne))
-    settled.forEach((s, idx) => {
-      const sym = batch[idx]
-      if (s.status === 'fulfilled') {
-        results[sym] = s.value
-      } else {
-        errors.push({ symbol: sym, error: s.reason?.message || 'failed' })
-      }
-    })
-  }
-
-  return { results, errors }
+  return fetchGlobalQuotes(parsed.symbols, process.env.FINNHUB_KEY)
 }
 
-// === Vercel handler ===
 export default async function handler(req, res) {
   if (applyCors(req, res)) return
 
   try {
     const url = new URL(req.url, `http://${req.headers.host}`)
-    const symbolsParam = url.searchParams.get('symbols') || ''
-    const data = await handle(symbolsParam)
+    const data = await handle(url.searchParams.get('symbols') || '')
+    // Finnhub ücretsiz katmanda dakikada 60 çağrı veriyor. Beş dakikalık
+    // paylaşımlı kenar önbelleği, birkaç cihazın aynı anda yenilemesini tek bir
+    // tura indiriyor.
     setCacheHeaders(res, { maxAge: 300, swr: 600 })
     res.status(200).json(data)
   } catch (err) {

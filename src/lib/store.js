@@ -61,7 +61,11 @@ const defaultSettings = {
   // this field exists to prevent.
   lastBackupAt: null,
   // Equity-price live-data metadata
-  finnhubApiKey: '',           // user-provided; empty = manual prices only
+  // KULLANIMDAN KALDIRILDI (Faz 3). Anahtar artık sunucuda bir ortam
+  // değişkeninde ve tarayıcıya hiç gitmiyor. Alan duruyor çünkü eski
+  // tarayıcıların saklanmış state'inde var; okuyan kod kalmadı. Bir sonraki
+  // şema sürümünde migrate ile silinebilir.
+  finnhubApiKey: '',
   priceMeta: {
     fetchedAt: null,           // last successful refresh timestamp
     lastError: null,
@@ -331,7 +335,6 @@ export const usePortfolioStore = create(
 
       refreshPrices: async (onProgress, options = {}) => {
         const state = get()
-        const apiKey = state.settings.finnhubApiKey?.trim()
         const sources = options.sources || ['bist', 'tefas', 'global']
 
         // Sunucu varsa kaynaklara ORADAN gidiliyor: anahtar sunucuda, kota tek
@@ -415,7 +418,6 @@ export const usePortfolioStore = create(
 
           const { results, errors, sourceStats } = await fetchAllPrices({
             holdings: heldHoldings,
-            finnhubApiKey: apiKey,
             onProgress,
             sources,
           })

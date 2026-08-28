@@ -9,7 +9,7 @@ Multi-currency personal portfolio dashboard with live prices for Turkish stocks,
 - 📈 **Live prices via public sources**:
   - 🇹🇷 BIST → İş Yatırım (no key)
   - 📊 TEFAS → tefas.gov.tr, falling back to FonBul (no key)
-  - 🌐 Global → Finnhub (free key, entered in Settings)
+  - 🌐 Global → Finnhub (key on the server, nothing to enter)
 - 🔄 **Automatic refresh** on a per-source schedule — equities while their
   markets are open, funds a few times a day (TEFAS publishes once each evening)
 - 🎯 **5-stage FIRE journey**: Coast → Barista → Lean → Regular → Fat
@@ -116,19 +116,18 @@ npm run dev:full
 
 Open http://localhost:5173.
 
-## Global stocks need a Finnhub key
+## Global stocks: the key lives on the server
 
-Stooq closed its free CSV endpoint in March 2026, so `api/global.js` no longer
-returns data on its own and global stocks need a Finnhub key. It is free and
-takes a minute:
+Stooq closed its free CSV endpoint in March 2026, so global equities come from
+Finnhub. **You do not enter a key in the app** — it is a server environment
+variable (`FINNHUB_KEY`), read by `api/global.js` and `api/refresh-prices.js`.
 
-1. Sign up free at [finnhub.io](https://finnhub.io) (no credit card)
-2. Copy your API key
-3. In the app: **Settings → Asset prices → Finnhub API key** → paste it
-4. Click "Refresh all prices" — global stocks now use Finnhub
+That is deliberate. When the key was per-browser it had to be re-typed on every
+device, it sat in plain view in the browser's network requests, and every device
+spent the same quota fetching the same symbol.
 
-The key is stored in your browser only and is deliberately stripped from JSON
-backups, so keep a copy somewhere else.
+For local development, put it in `.env.local`; `dev-proxy.js` picks it up. On
+Vercel, add it under Settings → Environment Variables, marked **Sensitive**.
 
 ## Project structure
 
@@ -138,7 +137,8 @@ portfolio-dashboard/
 │   ├── _http.js          # Shared timeout / CORS / cache helpers
 │   ├── bist.js           # BIST stock prices via İş Yatırım
 │   ├── tefas.js          # TEFAS fund prices via tefas.gov.tr → FonBul
-│   └── global.js         # Global equity prices via Stooq (see note below)
+│   ├── global.js         # Global equity prices via Finnhub
+│   └── refresh-prices.js # Scheduled fetch → writes the shared prices table
 ├── public/               # Static assets (icons, manifest, service worker)
 ├── src/
 │   ├── components/       # UI components

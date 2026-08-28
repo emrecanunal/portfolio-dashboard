@@ -1,64 +1,30 @@
 // Multi-source price API.
 //
-// Sources by asset type:
-//   - global → /api/global (proxy to Stooq, EOD data, NO KEY)
-//             → optionally Finnhub (intraday, requires user key) if provided
-//   - bist   → /api/bist (proxy to İş Yatırım, NO KEY)
-//   - tefas  → /api/tefas (proxy to FonBul, NO KEY)
+// Sources by asset type — all three go through our own /api/* proxies, and
+// none of them needs a key from the user:
+//   - global → /api/global (Finnhub, key lives on the server)
+//   - bist   → /api/bist   (İş Yatırım)
+//   - tefas  → /api/tefas  (tefas.gov.tr → FonBul)
 //
-// Stooq is the default for global because it requires zero setup — perfect
-// for sharing the app publicly. If a user provides a Finnhub API key in
-// Settings, intraday prices are used instead (Finnhub takes priority).
-
-const FINNHUB_BASE = 'https://finnhub.io/api/v1'
+// THE USER-SUPPLIED FINNHUB KEY IS GONE
+//
+// Until phase 3 this file also spoke to finnhub.io directly with a key the user
+// pasted into Settings. That existed because Stooq — the keyless global source —
+// closed in March 2026 and something had to fill the gap.
+//
+// It filled it badly: the key had to be re-entered on every device, it sat in
+// plain view in the browser's network requests, and every device spent the same
+// quota fetching the same symbol. The key now lives in a server env var and
+// api/global.js uses it, so the browser never sees one.
+//
+// This path is what runs when there is no backend configured (local-only mode).
+// With a backend, store.js goes to /api/refresh-prices instead, which also
+// writes the shared prices_latest table that every device reads.
 
 export const PRICE_STALE_AFTER_MS = 60 * 60 * 1000
 export const PRICE_VERY_STALE_AFTER_MS = 24 * 60 * 60 * 1000
 
-// === FINNHUB (optional, only if user provides key) ===
-
-async function fetchFinnhubQuote(symbol, apiKey) {
-  const url = `${FINNHUB_BASE}/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(apiKey)}`
-  const res = await fetch(url, { headers: { Accept: 'application/json' } })
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) throw new Error('INVALID_KEY')
-    if (res.status === 429) throw new Error('RATE_LIMIT')
-    throw new Error(`HTTP ${res.status}`)
-  }
-  const data = await res.json()
-  if (!data || typeof data.c !== 'number' || data.c === 0) {
-    throw new Error('NOT_FOUND')
-  }
-  return {
-    symbol,
-    price: data.c,
-    previousClose: data.pc,
-    dayChangePct: data.dp,
-    currency: 'USD',
-    fetchedAt: Date.now(),
-  }
-}
-
-async function fetchFinnhubBatch(symbols, apiKey, onProgress) {
-  if (!apiKey) throw new Error('NO_API_KEY')
-  const results = {}
-  const errors = []
-  for (let i = 0; i < symbols.length; i++) {
-    const sym = symbols[i]
-    try {
-      results[sym] = await fetchFinnhubQuote(sym, apiKey)
-    } catch (err) {
-      errors.push({ symbol: sym, error: err.message })
-      if (err.message === 'INVALID_KEY' && i === 0) throw err
-      if (err.message === 'RATE_LIMIT') break
-    }
-    onProgress?.(i + 1, symbols.length)
-    if (i < symbols.length - 1) await sleep(1100)
-  }
-  return { results, errors }
-}
-
-// === GLOBAL via proxy/Stooq (default, no key) ===
+// === GLOBAL (via proxy /api/global — Finnhub, server-side key) ===
 
 async function fetchGlobalBatch(symbols) {
   if (symbols.length === 0) return { results: {}, errors: [] }
@@ -106,10 +72,9 @@ async function fetchTefasBatch(symbols) {
 // === UNIFIED ENTRY POINT ===
 
 // Refresh all assets in one call. Routes each symbol to its appropriate source.
-//   - Global: Stooq via /api/global (default, no key needed)
-//   - Global: Finnhub (only if user provided a key — takes priority for intraday data)
-//   - BIST: /api/bist
-//   - TEFAS: /api/tefas
+//   - Global: /api/global
+//   - BIST:   /api/bist
+//   - TEFAS:  /api/tefas
 // `sources` limits the refresh to a subset, e.g. ['bist', 'global'].
 // Auto-refresh uses this because the three sources move on completely
 // different clocks: BIST and global equities tick through the trading day,
@@ -118,7 +83,6 @@ async function fetchTefasBatch(symbols) {
 // 6-requests-per-minute allowance for nothing.
 export async function fetchAllPrices({
   holdings,
-  finnhubApiKey,
   onProgress,
   sources = ['bist', 'tefas', 'global'],
 }) {
@@ -174,46 +138,27 @@ export async function fetchAllPrices({
     }
   }
 
-  // Global — Finnhub if key provided (intraday), otherwise Stooq via proxy (EOD, no key)
+  // Global — tek yol kaldı: kendi proxy'miz, anahtar sunucuda.
   if (globalSyms.length > 0) {
-    if (finnhubApiKey?.trim()) {
-      // User opted in to Finnhub for intraday prices
-      try {
-        const { results, errors } = await fetchFinnhubBatch(globalSyms, finnhubApiKey, (cur, tot) =>
-          onProgress?.('global', cur, tot)
-        )
-        Object.assign(allResults, results)
-        allErrors.push(...errors)
-        sourceStats.global = { ok: Object.keys(results).length, failed: errors.length, source: 'finnhub' }
-      } catch (err) {
-        sourceStats.global = { ok: 0, failed: globalSyms.length, error: err.message, source: 'finnhub' }
-        allErrors.push(...globalSyms.map((s) => ({ symbol: s, error: err.message })))
-      }
-    } else {
-      // Default path: Stooq via proxy
-      onProgress?.('global', 0, globalSyms.length)
-      try {
-        const { results, errors } = await fetchGlobalBatch(globalSyms)
-        Object.assign(allResults, results)
-        allErrors.push(...errors)
-        sourceStats.global = { ok: Object.keys(results).length, failed: errors.length, source: 'stooq' }
-        onProgress?.('global', globalSyms.length, globalSyms.length)
-      } catch (err) {
-        sourceStats.global = { ok: 0, failed: globalSyms.length, error: err.message, source: 'stooq' }
-        allErrors.push(...globalSyms.map((s) => ({ symbol: s, error: err.message })))
-      }
+    onProgress?.('global', 0, globalSyms.length)
+    try {
+      const { results, errors } = await fetchGlobalBatch(globalSyms)
+      Object.assign(allResults, results)
+      allErrors.push(...errors)
+      sourceStats.global = { ok: Object.keys(results).length, failed: errors.length, source: 'finnhub' }
+      onProgress?.('global', globalSyms.length, globalSyms.length)
+    } catch (err) {
+      sourceStats.global = { ok: 0, failed: globalSyms.length, error: err.message, source: 'finnhub' }
+      allErrors.push(...globalSyms.map((s) => ({ symbol: s, error: err.message })))
     }
   }
 
   return { results: allResults, errors: allErrors, sourceStats }
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms))
-}
-
-// Helper used by Settings table — kept for backward compatibility
+// Ayarlar'daki fiyat tablosu kullanıyor: bir sembolün otomatik fiyatlanıp
+// fiyatlanamayacağı. Adı tarihsel — artık "Finnhub'a uygun mu" değil, "global
+// bir hisse mi" sorusunu soruyor, ki cevabı belirleyen tek şey zaten oydu.
 export function isFetchableViaFinnhub(symbol, assetType) {
-  // Dotted US tickers (e.g. BRK.B) are valid on Finnhub; only the assetType check matters.
   return assetType === 'global' && !!symbol
 }

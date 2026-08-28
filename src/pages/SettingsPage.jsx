@@ -194,7 +194,6 @@ export default function SettingsPage() {
         <CardBody className="space-y-4">
           <PriceStatusBar />
           <AutoRefreshControl />
-          <FinnhubKeyInput />
           <PriceHistoryPanel />
           <PriceCacheTable />
         </CardBody>
@@ -590,7 +589,6 @@ function RefreshPricesButton() {
 function PriceStatusBar() {
   const { t, ti, lang } = useT()
   const priceMeta = usePortfolioStore((s) => s.settings.priceMeta) || {}
-  const apiKey = usePortfolioStore((s) => s.settings.finnhubApiKey)
 
   const { fetchedAt, lastError, lastErrorSymbols, sourceStats } = priceMeta
 
@@ -609,11 +607,14 @@ function PriceStatusBar() {
   // Determine top-line state
   let icon, iconColor, statusText, secondaryText
 
-  if (lastError === 'INVALID_KEY') {
+  // INVALID_KEY hâlâ olabilir ama artık KULLANICININ sorunu değil: anahtar
+  // sunucuda. Bu yüzden mesaj "anahtarını kontrol et" değil, "sunucu tarafında
+  // bir yapılandırma sorunu var" demeli — kullanıcının yapabileceği bir şey yok.
+  if (lastError === 'INVALID_KEY' || lastError === 'NO_API_KEY_GLOBAL') {
     icon = AlertCircle
     iconColor = 'text-danger'
-    statusText = t.settingsPage.errInvalidKey
-    secondaryText = t.settingsPage.finnhubKeyHint
+    statusText = t.settingsPage.errServerKey
+    secondaryText = t.settingsPage.errServerKeyHint
   } else if (
     // Parenthesised deliberately: && binds tighter than ||, so the original
     // read correctly by luck rather than by intent.
@@ -826,51 +827,6 @@ function AutoRefreshControl() {
           )}
         </>
       )}
-    </div>
-  )
-}
-
-function FinnhubKeyInput() {
-  const { t } = useT()
-  const apiKey = usePortfolioStore((s) => s.settings.finnhubApiKey) || ''
-  const setFinnhubApiKey = usePortfolioStore((s) => s.setFinnhubApiKey)
-  const [showKey, setShowKey] = useState(false)
-  const [localKey, setLocalKey] = useState(apiKey)
-
-  // Keep local in sync if changed externally
-  useEffect(() => {
-    setLocalKey(apiKey)
-  }, [apiKey])
-
-  const handleBlur = () => {
-    if (localKey.trim() !== apiKey) {
-      setFinnhubApiKey(localKey.trim())
-    }
-  }
-
-  return (
-    <div>
-      <label className="input-label">{t.settingsPage.finnhubKeyLabel}</label>
-      <div className="relative">
-        <input
-          type={showKey ? 'text' : 'password'}
-          className="input-field font-mono text-xs pr-20"
-          placeholder={t.settingsPage.finnhubKeyPlaceholder}
-          value={localKey}
-          onChange={(e) => setLocalKey(e.target.value)}
-          onBlur={handleBlur}
-        />
-        <button
-          type="button"
-          onClick={() => setShowKey(!showKey)}
-          className="tap absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-2xs text-text-tertiary hover:text-text-primary transition-colors"
-        >
-          {showKey ? 'hide' : 'show'}
-        </button>
-      </div>
-      <p className="text-2xs text-text-tertiary mt-1.5">
-        {t.settingsPage.finnhubKeyHint}
-      </p>
     </div>
   )
 }

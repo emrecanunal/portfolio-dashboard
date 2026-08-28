@@ -267,7 +267,7 @@ lint kontrolü de eklenecek.
 > işaretlemek, kaybolanları sunucuda bırakır ve bir sonraki çekmede geri
 > getirir. `outboxForReplacement` gidenlere mezar taşı koyuyor.
 
-### Faz 3 — Fiyat katmanı sunucuya
+### Faz 3 — Fiyat katmanı sunucuya ✅ (tamamlandı, 28 Ağustos 2026)
 
 `prices_latest` doldurulur, Finnhub ve Alpha Vantage anahtarları env'e taşınır,
 `src/lib/priceApi.js` dış kaynağa değil kendi veritabanımıza bakar. Tarayıcıda
@@ -294,6 +294,24 @@ kendiliğinden konu dışı kalıyor.
 > İstemciler yine Supabase'den okuduğu için mini kapalıyken de uygulama çalışır,
 > yalnızca fiyatlar bayatlar. Bu kararın şemaya etkisi yok — sadece
 > `prices_latest`'e kimin yazdığı değişir.
+
+> **Faz 3'te öğrenilenler.**
+>
+> **PostgREST toplu eklemede her satırın aynı anahtar kümesini istiyor**
+> (`PGRST102`). `JSON.stringify` `undefined` değerli anahtarları düşürdüğü için,
+> `api/bist.js`'in `source` alanını doldurmaması bütün yazmayı reddettiriyordu —
+> o sembolü değil, hepsini. Satırlar artık kaynağın şekline göre değil, elimizdeki
+> sembole göre kuruluyor.
+>
+> **Yerleşik e-posta servisi saatte 2 mesaj VE yalnızca proje ekibindeki
+> adreslere.** İkincisi Faz 4'ün önkoşulunu sertleştiriyor: özel SMTP olmadan
+> davet ettiğin kişiye bağlantı hiç ulaşmıyor, üstelik hata da alınmıyor. Parola
+> girişi eklendi ve bu sorunu *senin için* çözüyor; davet edilenler için çözmüyor.
+>
+> **Vercel ortam değişkenleri derleme anında okunuyor.** Sonradan eklenen bir
+> anahtarı mevcut deploy görmüyor; redeploy şart. `FINNHUB_KEY` tam bu yüzden
+> gözden kaçtı — BIST ve TEFAS anahtar istemediği için eksiklik ancak global
+> tarafta görünür oldu.
 
 ### Faz 4 — Çok kullanıcı hazırlığı (yakın çevreye açarken)
 

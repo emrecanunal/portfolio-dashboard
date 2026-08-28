@@ -299,6 +299,8 @@ export const translations = {
       sourceStatsLine: '{ok} updated, {failed} failed',
       bistTefasNote: 'BIST and funds need no key; global stocks use your Finnhub key',
       // Errors
+      errServerKey: 'Global prices are unavailable',
+      errServerKeyHint: 'The server could not reach Finnhub. Nothing to do here — this is a deployment setting, not something stored on this device.',
       errInvalidKey: 'Invalid API key',
       errRateLimit: 'Rate limit exceeded — try again in a minute',
       errNotFound: 'Not found',
@@ -685,6 +687,8 @@ export const translations = {
       sourceTefas: 'TEFAS',
       sourceStatsLine: '{ok} güncellendi, {failed} başarısız',
       bistTefasNote: "BIST ve fonlar anahtar istemez; global hisseler Finnhub anahtarını kullanır",
+      errServerKey: 'Global fiyatlar alınamıyor',
+      errServerKeyHint: 'Sunucu Finnhub\'a ulaşamadı. Burada yapabileceğin bir şey yok — bu bir dağıtım ayarı, bu cihazda saklanan bir şey değil.',
       errInvalidKey: 'Geçersiz API anahtarı',
       errRateLimit: 'Limit aşıldı — bir dakika sonra tekrar dene',
       errNotFound: 'Bulunamadı',
