@@ -27,8 +27,11 @@ export function DataWarnings({ portfolioId = null }) {
   )
 
   const warnings = useMemo(
-    () => computeDataWarnings(scoped, priceCache, fxRates),
-    [scoped, priceCache, fxRates]
+    // Portfolio list only on the master view. Scoped to one portfolio, `scoped`
+    // has already dropped every row that belongs to another one, so an orphan
+    // check there could only ever report the scope itself.
+    () => computeDataWarnings(scoped, priceCache, fxRates, portfolioId ? null : subPortfolios),
+    [scoped, priceCache, fxRates, portfolioId, subPortfolios]
   )
 
   const messages = useMemo(() => {
@@ -70,6 +73,11 @@ export function DataWarnings({ portfolioId = null }) {
             symbol: w.symbol,
             portfolio: portfolioName(w.portfolioId),
           }),
+        })
+      } else if (w.code === 'orphan_transactions') {
+        out.push({
+          key: `orphan-${w.portfolioId}`,
+          text: ti(t.warnings.orphanTransactions, { count: w.count, portfolioId: w.portfolioId }),
         })
       } else if (w.code === 'mixed_currency') {
         out.push({

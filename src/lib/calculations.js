@@ -395,7 +395,12 @@ export function computePortfolioSummary(transactions, priceCache, fxRates, portf
 // One place for every "your data says something impossible" check. Each entry
 // is { code, ... } with enough context for the UI to render an actionable
 // sentence. Codes are stable strings — translations key off them.
-export function computeDataWarnings(transactions, priceCache = {}, fxRates = {}) {
+export function computeDataWarnings(
+  transactions,
+  priceCache = {},
+  fxRates = {},
+  subPortfolios = null,
+) {
   const warnings = []
 
   // 1. A sub-portfolio whose cash went below zero.
@@ -473,6 +478,34 @@ export function computeDataWarnings(transactions, priceCache = {}, fxRates = {})
     if (!known && !seenMissing.has(h.symbol)) {
       seenMissing.add(h.symbol)
       warnings.push({ code: 'missing_price', symbol: h.symbol, assetType: h.assetType })
+    }
+  }
+
+  // 5. A transaction filed under a portfolio that no longer exists.
+  //
+  //    This one is invisible by construction. The portfolio list is what the
+  //    screen renders, but the totals are computed from the TRANSACTIONS — so a
+  //    row whose portfolio is gone keeps contributing to net worth while having
+  //    nowhere to be displayed. On 28 August that was 125.732 TRY of opening
+  //    balance sitting under a portfolio one device had and the other did not,
+  //    and no screen in the app could say where the difference came from.
+  //
+  //    Only checked when the caller passes the portfolio list, and only worth
+  //    passing on the master view: a screen already scoped to one portfolio has
+  //    filtered the orphans out before this function ever sees them.
+  if (subPortfolios) {
+    const known = new Set(subPortfolios.map((p) => p.id))
+    const counts = new Map()
+    for (const tx of transactions) {
+      // A transfer's destination is a second reference to a portfolio and can
+      // dangle on its own — the source may be alive while the target is gone.
+      for (const id of [tx.portfolioId, tx.type === 'transfer' ? tx.toPortfolioId : null]) {
+        if (!id || known.has(id)) continue
+        counts.set(id, (counts.get(id) || 0) + 1)
+      }
+    }
+    for (const [portfolioId, count] of counts) {
+      warnings.push({ code: 'orphan_transactions', portfolioId, count })
     }
   }
 

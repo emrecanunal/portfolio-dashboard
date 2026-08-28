@@ -200,6 +200,37 @@ describe('computeCashRuns', () => {
 })
 
 describe('computeDataWarnings', () => {
+  // 28 Ağustos. Portföy listesi ekranın gösterdiği şey, ama toplamlar
+  // İŞLEMLERDEN hesaplanıyor — portföyü ortadan kalkmış bir satır net varlığa
+  // katılmaya devam ediyor ve gösterilecek hiçbir yeri olmuyor. Bir cihazda 4
+  // portföy, diğerinde 5 ve arada 125.732 ₺; uygulamadaki hiçbir ekran farkın
+  // nereden geldiğini söyleyemiyordu.
+  it('flags transactions whose portfolio is gone — but only when given the list', () => {
+    const rows = [tx({ portfolioId: P1 }), tx({ portfolioId: 'sub-default' })]
+
+    // Liste verilmeden sessiz: eski çağıranlar davranış değiştirmemeli.
+    expect(computeDataWarnings(rows, {}, FX).filter((w) => w.code === 'orphan_transactions'))
+      .toHaveLength(0)
+
+    const orphans = computeDataWarnings(rows, {}, FX, [{ id: P1, name: 'T3' }])
+      .filter((w) => w.code === 'orphan_transactions')
+    expect(orphans).toHaveLength(1)
+    expect(orphans[0]).toMatchObject({ portfolioId: 'sub-default', count: 1 })
+  })
+
+  // Transferin hedefi portföye YAPILAN ikinci bir referans ve tek başına
+  // sarkabilir: kaynak yaşarken hedef silinmiş olabilir.
+  it('flags a transfer whose destination portfolio is gone', () => {
+    const orphans = computeDataWarnings(
+      [tx({ type: 'transfer', assetType: 'cash', symbol: 'CASH', portfolioId: P1, toPortfolioId: 'yok' })],
+      {},
+      FX,
+      [{ id: P1, name: 'T3' }],
+    ).filter((w) => w.code === 'orphan_transactions')
+    expect(orphans).toHaveLength(1)
+    expect(orphans[0].portfolioId).toBe('yok')
+  })
+
   it('flags selling more than is held', () => {
     // BUG 1.7: the position simply vanished from the holdings list, silently.
     const warnings = computeDataWarnings(
