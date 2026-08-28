@@ -404,3 +404,39 @@ describe('resetSyncCursor', () => {
     expect(outbox.settings).toBe(true)
   })
 })
+
+// "Tümünü yeniden çek" düğmesi ilk gün geri tepti. İmleci sıfırlıyordu, ama
+// runSync imleci null görünce onu "bu tarayıcı hiç senkronlanmadı" sayıp
+// markEverythingDirty() çağırıyor — yani yereldeki HER satırı gönderim
+// kuyruğuna alıyor. Düğmenin anlamı bunun tam tersiydi: "sunucu doğru, beni
+// tamamla". Bir telefonda 412 kayıt gönderilmeyi beklerken sunucuda 372 satır
+// vardı; aradaki fark, onarımın temizlediği eski satırlardı ve o gönderim
+// onları geri diriltecekti.
+describe('adoption vs refetch', () => {
+  it('does not queue the whole local book when the cursor was reset on purpose', () => {
+    seed({ transactions: [TX('t1'), TX('t2')] })
+    usePortfolioStore.setState({
+      syncMeta: { cursor: '2026-08-28T20:00:00.000Z', lastSyncAt: 'x', lastError: null, status: 'idle', adopted: true },
+    })
+
+    usePortfolioStore.getState().resetSyncCursor()
+    const { syncMeta, outbox } = usePortfolioStore.getState()
+
+    // İmleç sıfır — sonraki çekme baştan yürüyecek.
+    expect(syncMeta.cursor).toBeNull()
+    // Ama benimseme işareti duruyor, yani runSync markEverythingDirty çağırmayacak.
+    expect(syncMeta.adopted).toBe(true)
+    // Ve kuyruk hâlâ boş: gönderilecek yerel bir değişiklik yok.
+    expect(Object.keys(outbox.transactions)).toHaveLength(0)
+  })
+
+  it('still marks a never-synced browser dirty, and only once', () => {
+    seed({ transactions: [TX('t1'), TX('t2')] })
+
+    usePortfolioStore.getState().markEverythingDirty()
+
+    const { syncMeta, outbox } = usePortfolioStore.getState()
+    expect(syncMeta.adopted).toBe(true)
+    expect(Object.keys(outbox.transactions)).toEqual(['t1', 't2'])
+  })
+})

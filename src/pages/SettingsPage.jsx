@@ -1574,7 +1574,10 @@ function AccountCard() {
               setRefetching(true)
               resetSyncCursor()
               try {
-                await syncNow(user.id)
+                // getSession() { userId, email } döndürüyor, { id } DEĞİL.
+                // user.id undefined gidince user_id boş yazılıyor ve sunucu
+                // satırı RLS ile reddediyor.
+                await syncNow(user.userId)
               } finally {
                 setRefetching(false)
               }

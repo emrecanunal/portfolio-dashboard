@@ -60,7 +60,12 @@ async function runSync(userId) {
     // koşul imlecin null olması — outbox'ın boş olması DEĞİL, çünkü boş bir
     // outbox "gönderilecek bir şey yok" anlamına da gelir ve ikisi karıştırılırsa
     // 364 işlem sunucuya hiç çıkmaz.
-    if (store.syncMeta.cursor === null) {
+    // ...ama YALNIZCA bir kez. `adopted` bunu ayırıyor: imleç sıfır olabilir
+    // çünkü tarayıcı yeni (benimse) ya da çünkü kullanıcı "tümünü yeniden çek"
+    // dedi (benimseME — o düğme sunucunun doğru olduğunu söylüyor). İkisini
+    // yalnızca imlece bakarak ayırt etmek, ikinci durumda yereldeki artıkları
+    // sunucuya geri diriltmek demekti.
+    if (store.syncMeta.cursor === null && !store.syncMeta.adopted) {
       store.markEverythingDirty()
     }
 
@@ -94,6 +99,13 @@ function fail(error) {
 // --- Gönderme --------------------------------------------------------------
 
 async function pushOutbox(userId) {
+  // Kimliksiz gönderim yapma. Bunu sunucuya sormak, satırın user_id'si boş
+  // gittiği için "new row violates row-level security policy" ile geri
+  // dönüyordu — doğru bir ret ama okuyana hiçbir şey anlatmayan bir cümle,
+  // ve çağıranın oturum nesnesinden yanlış alanı okuduğunu (user.id, oysa
+  // getSession() { userId, email } döndürüyor) hiç söylemiyor.
+  if (!userId) return { ok: false, error: 'no-user-id' }
+
   const s = usePortfolioStore.getState()
   const { outbox } = s
 

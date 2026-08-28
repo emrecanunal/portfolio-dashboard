@@ -109,7 +109,7 @@ export const usePortfolioStore = create(
 
       // Gönderilmeyi bekleyen değişiklikler; ayrıntısı emptyOutbox()'ın üstünde.
       outbox: emptyOutbox(),
-      syncMeta: { cursor: null, lastSyncAt: null, lastError: null, status: 'idle' },
+      syncMeta: { cursor: null, lastSyncAt: null, lastError: null, status: 'idle', adopted: false },
 
       addTransaction: (tx) =>
         set((s) => {
@@ -284,7 +284,16 @@ export const usePortfolioStore = create(
        * tamamlar, bekleyen düzenlemeyi geri almaz.
        */
       resetSyncCursor: () =>
-        set((s) => ({ syncMeta: { ...s.syncMeta, cursor: null, lastError: null } })),
+        set((s) => ({
+          // adopted: true KRİTİK. runSync, imleci null görünce bunu "bu tarayıcı
+          // hiç senkronlanmadı" sanıp markEverythingDirty() çağırıyor — yani
+          // yereldeki HER satırı gönderim kuyruğuna alıyor. Bu düğmenin anlamı
+          // bunun tam tersi: "sunucu doğru, beni tamamla". İşareti bırakmadan
+          // imleci sıfırlamak, sunucuda olmayan yerel artıkları (28 Ağustos'ta
+          // bir telefonda 412 kayıt bekliyordu, sunucuda 372 satır vardı) geri
+          // dirilterek onarılmış kitabın üstüne yazardı.
+          syncMeta: { ...s.syncMeta, cursor: null, adopted: true, lastError: null },
+        })),
 
       // === SENKRON ===
       //
@@ -384,14 +393,22 @@ export const usePortfolioStore = create(
         return renamed
       },
 
-      /** Her şeyi kirli işaretle — ilk senkron ve "baştan gönder" için. */
+      /**
+       * Her şeyi kirli işaretle — İLK senkron için, yani benimseme.
+       *
+       * Bu eylem "bu cihazdaki kitap doğrudur, sunucuya çıksın" demek. Yalnızca
+       * hiç senkronlanmamış bir tarayıcı için doğru. Bir daha çalışmasın diye
+       * `adopted` işaretleniyor: imleç başka bir sebeple sıfırlanırsa (bkz.
+       * resetSyncCursor) bu eylem TEKRAR tetiklenmemeli, yoksa kullanıcı
+       * "sunucudan doldur" derken "sunucuyu bu cihazla ez" almış olur.
+       */
       markEverythingDirty: () =>
         set((s) => {
           const outbox = emptyOutbox()
           for (const t of s.transactions) outbox.transactions[t.id] = 'upsert'
           for (const p of s.subPortfolios) outbox.portfolios[p.id] = 'upsert'
           outbox.settings = true
-          return { outbox }
+          return { outbox, syncMeta: { ...s.syncMeta, adopted: true } }
         }),
 
       // Dil ve tema CİHAZA ait, kişiye değil — telefonda karanlık, masaüstünde
