@@ -117,8 +117,8 @@ export const translations = {
       positionBreakdown: 'Positions',
       positionBreakdownDesc: 'What this portfolio is made of, largest first',
       otherPositions: 'Other ({n} more)',
-      shareOfTotal: 'This portfolio is {pct}% of everything you hold',
-      shareOfTotalDesc: 'FIRE progress is measured across all portfolios together — money goes into the whole, not into one of them.',
+      shareOfTotalTitle: 'Share of everything you hold',
+      shareOfTotalDesc: 'Money goes into the whole, not into one portfolio — so FIRE is measured across all of them together.',
     },
     fire: {
       progress: 'FIRE progress',
@@ -526,8 +526,8 @@ export const translations = {
       positionBreakdown: 'Pozisyonlar',
       positionBreakdownDesc: 'Bu portföy nelerden oluşuyor, büyükten küçüğe',
       otherPositions: 'Diğer ({n} kalem)',
-      shareOfTotal: 'Bu portföy tüm varlığının %{pct}\'i',
-      shareOfTotalDesc: 'FIRE ilerlemesi portföylerin tamamı üzerinden ölçülüyor — para bir alt portföye değil, bütününe giriyor.',
+      shareOfTotalTitle: 'Tüm varlığın içindeki payı',
+      shareOfTotalDesc: 'Para bir alt portföye değil bütününe giriyor — o yüzden FIRE hepsinin üzerinden ölçülüyor.',
     },
     fire: {
       progress: 'FIRE ilerleme',

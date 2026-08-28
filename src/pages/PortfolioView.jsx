@@ -154,18 +154,22 @@ export function PortfolioView({ scope = { type: 'master' } }) {
     monthlyGrowthRate: fireMetrics.avgMonthlyGrowthPct,
   })
 
-  // Master-only: per-sub-portfolio breakdown
+  // Her portföyün değeri ve toplam içindeki payı.
+  //
+  // Eskiden yalnızca master'da hesaplanıyordu; alt görünümdeki pay çubuğu da
+  // buna ihtiyaç duyuyor. Payda `summary.totalValue` DEĞİL `masterTotalTRY`:
+  // alt görünümde summary o portföye daraltılmış durumda ve payları kendisine
+  // bölmek her portföyü %100 gösterirdi.
   const subSummaries = useMemo(() => {
-    if (!isMaster) return []
     return subPortfolios.map((p) => {
       const s = computePortfolioSummary(transactions, priceCache, settings.fxRates, p.id)
       return {
         ...p,
         ...s,
-        shareOfTotal: summary.totalValue > 0 ? (s.totalValue / summary.totalValue) * 100 : 0,
+        shareOfTotal: masterTotalTRY > 0 ? (s.totalValue / masterTotalTRY) * 100 : 0,
       }
     })
-  }, [isMaster, subPortfolios, transactions, priceCache, settings.fxRates, summary.totalValue])
+  }, [subPortfolios, transactions, priceCache, settings.fxRates, masterTotalTRY])
 
   // Recent transactions in scope
   const recentTxns = useMemo(
@@ -298,7 +302,11 @@ export function PortfolioView({ scope = { type: 'master' } }) {
           fireMultiplier={activeStage.multiplier}
         />
       ) : (
-        <ShareOfTotal shareTRY={summary.totalValue} totalTRY={masterTotalTRY} />
+        <ShareOfTotal
+          portfolios={subSummaries}
+          currentId={portfolioId}
+          color={scope.portfolio?.color}
+        />
       )}
 
       {/* === ALLOCATION + PERFORMANCE === */}
@@ -469,38 +477,91 @@ export function PortfolioView({ scope = { type: 'master' } }) {
   )
 }
 
-// Alt portföyün toplam içindeki ağırlığı.
+// Alt portföyün toplam içindeki ağırlığı — ve diğerlerinin yanındaki yeri.
 //
-// FIRE kartının yerini alıyor ve neden aldığını anlatmaya değer: FIRE hedefi
-// tek ve küresel. Alt portföyde göstermek, her portföyün kendi hedefi varmış
-// izlenimi veriyordu — üstelik üçünün yüzdeleri toplanınca gerçek olan çıkıyor,
-// yani sayılar "yanlış" değil, YANLIŞ OKUNMAYA AÇIKTI.
+// FIRE kartının yerini alıyor. Neden aldığı önemli: FIRE hedefi tek ve küresel,
+// alt portföyde göstermek her portföyün kendi hedefi varmış izlenimi veriyordu.
 //
-// Bunun yerine cevaplanan soru şu: bu portföy senin varlığının ne kadarı.
-// Uydurma bir hedef yok, toplanabilir bir sayı var.
-function ShareOfTotal({ shareTRY, totalTRY }) {
+// NEDEN TEK BİR ÇUBUK DEĞİL, HEPSİ
+//
+// "Toplamın %36,5'i" doğru ama yalnız bir sayı. Aynı yerde bütün portföyleri
+// göstermek, aynı görsel bütçeyle ikinci bir soruyu da cevaplıyor: bu portföy
+// diğerlerinin yanında nerede duruyor. Master'daki alt portföy kartına gitmeden
+// görülebiliyor.
+//
+// RENK: bu portföy kendi rengiyle, diğerleri tek bir geri çekilmiş griyle.
+// Hepsini kendi renkleriyle boyamak kimliği korurdu ama vurguyu dağıtırdı —
+// buradaki soru "hangi portföy hangisi" değil, "BU portföy ne kadarı". Griler
+// bağlam; adları ve yüzdeleri altta metin olarak yazılı, yani kimlik renge
+// hiç bağlı değil.
+function ShareOfTotal({ portfolios, currentId, color }) {
   const { t, ti } = useT()
-  if (!(totalTRY > 0)) return null
-  const pct = (shareTRY / totalTRY) * 100
+
+  const total = portfolios.reduce((sum, p) => sum + Math.max(0, p.totalValue), 0)
+  if (!(total > 0)) return null
+
+  const current = portfolios.find((p) => p.id === currentId)
+  const pct = current?.shareOfTotal ?? 0
+  const others = portfolios.filter((p) => p.id !== currentId && p.totalValue > 0)
+
+  // Büyükten küçüğe: en büyük parça solda, göz soldan başlıyor.
+  const segments = [...portfolios]
+    .filter((p) => p.totalValue > 0)
+    .sort((a, b) => b.totalValue - a.totalValue)
 
   return (
     <Card>
-      <CardBody className="pt-5 flex items-center gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-text-primary">
-            {ti(t.dashboard.shareOfTotal, { pct: pct.toFixed(1) })}
+      <CardBody className="p-5">
+        <div className="flex items-end justify-between mb-4 flex-wrap gap-3">
+          <div>
+            <h3 className="text-base font-medium text-text-primary">{t.dashboard.shareOfTotalTitle}</h3>
+            <p className="text-xs text-text-tertiary mt-1">{t.dashboard.shareOfTotalDesc}</p>
           </div>
-          <div className="text-2xs text-text-tertiary mt-0.5">
-            {t.dashboard.shareOfTotalDesc}
+          <div className="text-right">
+            <div className="text-2xl font-medium tabular-nums text-text-primary">
+              {pct.toFixed(1)}%
+            </div>
+            <div className="text-xs text-text-tertiary mt-0.5">
+              {formatCurrency(current?.totalValue || 0, 'TRY', { compact: true, decimals: 2 })}
+            </div>
           </div>
         </div>
-        <div className="w-32 shrink-0">
-          <div className="h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+
+        {/* Yığılmış çubuk. Parçalar arasında 2px yüzey boşluğu var: bitişik iki
+            dolgu boşluksuz durduğunda sınır kaybolur ve iki parça tek bir
+            parça gibi okunur. */}
+        <div className="flex gap-[2px] h-2.5 mb-3">
+          {segments.map((p) => (
             <div
-              className="h-full rounded-full"
-              style={{ width: `${Math.min(pct, 100)}%`, background: 'var(--chart-bar)' }}
+              key={p.id}
+              className="h-full first:rounded-l-full last:rounded-r-full transition-all duration-500"
+              style={{
+                width: `${Math.max((p.totalValue / total) * 100, 0.8)}%`,
+                background: p.id === currentId ? (color || 'var(--chart-bar)') : 'var(--chart-bar-muted)',
+              }}
+              title={`${p.name} · ${p.shareOfTotal.toFixed(1)}%`}
             />
-          </div>
+          ))}
+        </div>
+
+        {/* Kimlik metinde, renkte değil: renk körü bir okuyucu da, gri
+            parçaları birbirinden ayıramayan biri de buradan okuyabiliyor. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-2xs">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="w-2 h-2 rounded-sm shrink-0"
+              style={{ background: color || 'var(--chart-bar)' }}
+            />
+            <span className="text-text-primary">{current?.name}</span>
+            <span className="text-text-tertiary tabular-nums">{pct.toFixed(1)}%</span>
+          </span>
+          {others.map((p) => (
+            <span key={p.id} className="inline-flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: 'var(--chart-bar-muted)' }} />
+              <span className="text-text-tertiary">{p.name}</span>
+              <span className="text-text-muted tabular-nums">{p.shareOfTotal.toFixed(1)}%</span>
+            </span>
+          ))}
         </div>
       </CardBody>
     </Card>
