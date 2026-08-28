@@ -147,6 +147,78 @@ export const usePortfolioStore = create(
           outbox: mark(s.outbox, 'portfolios', id, 'upsert'),
         })),
 
+      /**
+       * Kasa'yı seç — paranın girip çıktığı portföy.
+       *
+       * TEK BİR TANE OLABİLİR, ve bu bir kısıt değil bir tanım: "paranın girdiği
+       * yer" birden fazla olamaz, olursa soru tekrar cevapsız kalır. Bu yüzden
+       * yeni birini işaretlemek diğerinin işaretini kaldırıyor — kullanıcıdan
+       * önce eskisini kapatmasını istemek, unutulduğunda iki kasalı ve sessizce
+       * anlamsız bir duruma yol açardı.
+       *
+       * null geçmek hepsini temizler.
+       */
+      setCashAccount: (id) =>
+        set((s) => {
+          const outbox = { ...s.outbox, portfolios: { ...s.outbox.portfolios } }
+          const subPortfolios = s.subPortfolios.map((p) => {
+            const next = p.id === id
+            if (Boolean(p.isCashAccount) === next) return p
+            outbox.portfolios[p.id] = 'upsert'
+            return { ...p, isCashAccount: next }
+          })
+          return { subPortfolios, outbox }
+        }),
+
+      /**
+       * Portföyün başlangıç bakiyesi.
+       *
+       * Bir işlem olarak saklanıyor, portföyün bir alanı olarak değil: aynı
+       * zaman çizgisinde duruyor, yedeğe ve CSV'ye kendiliğinden giriyor,
+       * senkronda ayrı bir yol gerektirmiyor ve işlem listesinde görünüyor.
+       * Portföy alanı olsaydı bunların her biri ayrıca yazılmak zorundaydı.
+       *
+       * Portföy başına EN FAZLA BİR tane: ikincisi bir düzeltme değil, sessizce
+       * ikiye katlanmış bir bakiye olurdu. Bu yüzden varsa güncelleniyor.
+       * amount 0 ya da boşsa kayıt siliniyor.
+       */
+      setOpeningBalance: (portfolioId, { amount, currency = 'TRY', date }) =>
+        set((s) => {
+          const existing = s.transactions.find(
+            (t) => t.type === 'opening' && t.portfolioId === portfolioId,
+          )
+          const value = Number(amount) || 0
+
+          if (!value) {
+            if (!existing) return {}
+            return {
+              transactions: s.transactions.filter((t) => t.id !== existing.id),
+              outbox: mark(s.outbox, 'transactions', existing.id, 'delete'),
+            }
+          }
+
+          const row = {
+            id: existing?.id || crypto.randomUUID(),
+            type: 'opening',
+            assetType: 'cash',
+            symbol: 'CASH',
+            portfolioId,
+            quantity: 1,
+            price: value,
+            fee: 0,
+            currency,
+            date: date || existing?.date || todayIso(),
+            notes: existing?.notes || '',
+          }
+
+          return {
+            transactions: existing
+              ? s.transactions.map((t) => (t.id === existing.id ? row : t))
+              : [...s.transactions, row],
+            outbox: mark(s.outbox, 'transactions', row.id, 'upsert'),
+          }
+        }),
+
       deleteSubPortfolio: (id) =>
         set((s) => ({
           subPortfolios: s.subPortfolios.filter((p) => p.id !== id),

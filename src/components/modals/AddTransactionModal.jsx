@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowDownLeft, ArrowUpRight, Sparkles, ArrowLeftRight } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowDownLeft, ArrowUpRight, Sparkles, ArrowLeftRight, ArrowRightLeft } from 'lucide-react'
 import { useT } from '../../i18n/useT.js'
 import { usePortfolioStore } from '../../lib/store.js'
 import { computePortfolioSummary, computeHoldings, todayYmd } from '../../lib/calculations.js'
@@ -8,11 +8,15 @@ import { Modal } from '../ui/Modal.jsx'
 import { Button } from '../ui/Primitives.jsx'
 import { cn } from '../../lib/utils.js'
 
+// 'opening' (başlangıç bakiyesi) burada YOK — kasten. Portföy başına bir kez
+// kurulan bir şey, ve en sık kullanılan ekranı bir daha asla dokunulmayacak bir
+// düğmeyle kalabalıklaştırmanın anlamı yok. Yeri: Ayarlar → portföy satırı.
 const TYPE_OPTIONS = [
   { value: 'buy', icon: ArrowDown, color: 'success' },
   { value: 'sell', icon: ArrowUp, color: 'danger' },
   { value: 'deposit', icon: ArrowDownLeft, color: 'info' },
   { value: 'withdraw', icon: ArrowUpRight, color: 'warning' },
+  { value: 'transfer', icon: ArrowRightLeft, color: 'info' },
   { value: 'exchange', icon: ArrowLeftRight, color: 'accent' },
 ]
 
@@ -191,6 +195,18 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
         return
       }
     }
+    if (form.type === 'transfer') {
+      if (!price || !form.toPortfolioId) {
+        setSubmitError(t.txn.pleaseFillRequired)
+        return
+      }
+      // Kendine transfer bir işlem değil, bir yazım hatası — ve hiçbir etkisi
+      // olmadığı için fark edilmeden kitapta durur.
+      if (form.toPortfolioId === form.portfolioId) {
+        setSubmitError(t.txn.transferSamePortfolio)
+        return
+      }
+    }
 
     const toAmount = parseFloat(form.toAmount)
     if (form.type === 'exchange') {
@@ -206,7 +222,8 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
 
     if (cashWarning && !confirmedCashWarning) return
 
-    const isCashMove = form.type === 'deposit' || form.type === 'withdraw'
+    const isCashMove =
+      form.type === 'deposit' || form.type === 'withdraw' || form.type === 'transfer'
 
     let tx
     if (form.type === 'exchange') {
@@ -239,11 +256,17 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
         portfolioId: form.portfolioId,
         notes: form.notes,
       }
+      if (form.type === 'transfer') tx.toPortfolioId = form.toPortfolioId
       // updateTransaction shallow-merges, so an exchange retyped as something
       // else would keep stale FX fields unless we explicitly clear them.
       if (isEdit && existingTxn.type === 'exchange') {
         tx.toAmount = null
         tx.toCurrency = null
+      }
+      // Aynı sebep: transfer olmaktan çıkan bir kayıt hedefini taşımaya devam
+      // ederse, nakit hesabı hâlâ iki portföye birden yazar.
+      if (isEdit && existingTxn.type === 'transfer' && form.type !== 'transfer') {
+        tx.toPortfolioId = null
       }
     }
 
@@ -266,7 +289,7 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
         {/* Type selector */}
         <div>
           <div className="input-label">{t.txn.transactionType}</div>
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
             {TYPE_OPTIONS.map((opt) => {
               const Icon = opt.icon
               const isActive = form.type === opt.value
@@ -309,7 +332,9 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
             />
           </div>
           <div>
-            <label className="input-label">{t.txn.addToPortfolio} *</label>
+            <label className="input-label">
+              {form.type === 'transfer' ? t.txn.transferFrom : t.txn.addToPortfolio} *
+            </label>
             <select
               className="input-field"
               value={form.portfolioId}
@@ -438,8 +463,32 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
         )}
 
         {/* Cash flow — deposit/withdraw */}
-        {(form.type === 'deposit' || form.type === 'withdraw') && (
-          <div className="grid grid-cols-2 gap-3">
+        {/* Transferin hedefi. Kaynak, yukarıdaki "alt portföy" seçicisi —
+            transferde onun etiketi de "nereden" olarak değişiyor, yoksa hangi
+            seçicinin hangi ucu gösterdiği belirsiz kalıyor. */}
+        {form.type === 'transfer' && (
+          <div>
+            <label className="input-label">{t.txn.transferTo} *</label>
+            <select
+              className="input-field"
+              value={form.toPortfolioId}
+              onChange={(e) => update({ toPortfolioId: e.target.value })}
+            >
+              <option value="">—</option>
+              {subPortfolios
+                .filter((p) => p.id !== form.portfolioId)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+            <p className="text-2xs text-text-tertiary mt-1.5">{t.txn.transferHint}</p>
+          </div>
+        )}
+
+        {(form.type === 'deposit' || form.type === 'withdraw' || form.type === 'transfer') && (
+          <div className={cn('grid gap-3', form.type === 'transfer' ? 'grid-cols-3' : 'grid-cols-2')}>
             <div>
               <label className="input-label">{t.txn.amount} *</label>
               <input
@@ -466,6 +515,23 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
                 ))}
               </select>
             </div>
+            {/* Masraf yalnızca transferde. Para yatırma ve çekmede bankanın
+                kestiği ücret zaten tutara yansımış oluyor; transferde ise
+                gönderen taraftan ayrıca düşüyor ve hesap bunu ayırt ediyor. */}
+            {form.type === 'transfer' && (
+              <div>
+                <label className="input-label">{t.txn.fee}</label>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  className="input-field tabular-nums"
+                  value={form.fee}
+                  onChange={(e) => update({ fee: e.target.value })}
+                  placeholder="0.00"
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -660,6 +726,7 @@ function initialForm(subPortfolios, existingTxn, defaultPortfolioId = null) {
       toAmount: String(existingTxn.toAmount || ''),
       toCurrency: existingTxn.toCurrency || 'USD',
       portfolioId: existingTxn.portfolioId,
+      toPortfolioId: existingTxn.toPortfolioId || '',
       notes: existingTxn.notes || '',
     }
   }
@@ -673,6 +740,7 @@ function initialForm(subPortfolios, existingTxn, defaultPortfolioId = null) {
     date: todayYmd(),
     type: 'buy',
     assetType: 'bist',
+    toPortfolioId: '',
     symbol: '',
     quantity: '',
     price: '',

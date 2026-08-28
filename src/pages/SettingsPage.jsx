@@ -26,6 +26,8 @@ export default function SettingsPage() {
   const updateSettings = usePortfolioStore((s) => s.updateSettings)
   const addSubPortfolio = usePortfolioStore((s) => s.addSubPortfolio)
   const renameSubPortfolio = usePortfolioStore((s) => s.renameSubPortfolio)
+  const setCashAccount = usePortfolioStore((s) => s.setCashAccount)
+  const setOpeningBalance = usePortfolioStore((s) => s.setOpeningBalance)
   const deleteSubPortfolio = usePortfolioStore((s) => s.deleteSubPortfolio)
   const loadDemoData = usePortfolioStore((s) => s.loadDemoData)
   const clearAllTransactions = usePortfolioStore((s) => s.clearAllTransactions)
@@ -91,16 +93,40 @@ export default function SettingsPage() {
   }
 
   // Rename modal
+  // Tek bir "portföyü düzenle" penceresi. Eskiden yalnızca ad değiştiriyordu;
+  // Kasa işareti ve başlangıç bakiyesi de portföye ait ayarlar, ve üçünü satır
+  // içine sığdırmak listeyi okunmaz hâle getirirdi.
   const [renameTarget, setRenameTarget] = useState(null)
   const [renameValue, setRenameValue] = useState('')
+  const [editIsCash, setEditIsCash] = useState(false)
+  const [openingValue, setOpeningValue] = useState('')
+  const [openingCcy, setOpeningCcy] = useState('TRY')
+  const [openingDate, setOpeningDate] = useState('')
+
   const openRename = (p) => {
+    const opening = transactions.find((t) => t.type === 'opening' && t.portfolioId === p.id)
     setRenameTarget(p)
     setRenameValue(p.name)
+    setEditIsCash(Boolean(p.isCashAccount))
+    setOpeningValue(opening ? String(opening.price) : '')
+    setOpeningCcy(opening?.currency || 'TRY')
+    setOpeningDate(opening?.date || '')
   }
+
   const handleRename = () => {
     const name = renameValue.trim()
     if (!name || !renameTarget) return
     renameSubPortfolio(renameTarget.id, name)
+    // Kasa işareti tekil: açmak diğerini kapatıyor, kapatmak hiçbirini
+    // bırakmıyor. setCashAccount(null) ikincisini yapıyor.
+    if (editIsCash !== Boolean(renameTarget.isCashAccount)) {
+      setCashAccount(editIsCash ? renameTarget.id : null)
+    }
+    setOpeningBalance(renameTarget.id, {
+      amount: openingValue,
+      currency: openingCcy,
+      date: openingDate || undefined,
+    })
     setRenameTarget(null)
   }
 
@@ -385,10 +411,10 @@ export default function SettingsPage() {
       <Modal
         open={Boolean(renameTarget)}
         onClose={() => setRenameTarget(null)}
-        title={t.settingsPage.renamePortfolio}
+        title={t.settingsPage.editPortfolio}
         maxWidth="max-w-md"
       >
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-5">
           <div>
             <label className="input-label">{t.settingsPage.newPortfolioName}</label>
             <input
@@ -399,6 +425,56 @@ export default function SettingsPage() {
               onKeyDown={(e) => e.key === 'Enter' && handleRename()}
               autoFocus
             />
+          </div>
+
+          {/* Kasa */}
+          <label className="flex items-start gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={editIsCash}
+              onChange={(e) => setEditIsCash(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded border-border-strong cursor-pointer accent-accent shrink-0"
+            />
+            <span>
+              <span className="text-sm text-text-primary">{t.settingsPage.cashAccount}</span>
+              <span className="block text-2xs text-text-tertiary mt-0.5">
+                {t.settingsPage.cashAccountDesc}
+              </span>
+            </span>
+          </label>
+
+          {/* Başlangıç bakiyesi */}
+          <div>
+            <label className="input-label">{t.settingsPage.openingBalance}</label>
+            <div className="grid grid-cols-[1fr_auto_1fr] gap-2">
+              <input
+                type="number"
+                step="any"
+                min="0"
+                className="input-field tabular-nums"
+                value={openingValue}
+                onChange={(e) => setOpeningValue(e.target.value)}
+                placeholder="0.00"
+              />
+              <select
+                className="input-field"
+                value={openingCcy}
+                onChange={(e) => setOpeningCcy(e.target.value)}
+              >
+                {['TRY', 'USD', 'EUR'].map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <input
+                type="date"
+                className="input-field"
+                value={openingDate}
+                onChange={(e) => setOpeningDate(e.target.value)}
+              />
+            </div>
+            <p className="text-2xs text-text-tertiary mt-1.5 leading-relaxed">
+              {t.settingsPage.openingBalanceDesc}
+            </p>
           </div>
         </div>
         <div className="border-t border-border-subtle p-4 flex justify-end gap-2 bg-bg-secondary">

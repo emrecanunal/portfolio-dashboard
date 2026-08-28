@@ -63,6 +63,7 @@ export function portfolioToDb(p, userId, sortOrder = 0) {
     name: p.name,
     color: p.color,
     sort_order: sortOrder,
+    is_cash_account: Boolean(p.isCashAccount),
   }
 }
 
@@ -71,6 +72,10 @@ export function portfolioFromDb(row) {
     id: row.id,
     name: row.name,
     color: row.color,
+    // Yalnızca doğruyken taşınıyor: her portföye isCashAccount:false yazmak,
+    // mapping.test.js'in gidip-gelme testini de bozardı ve veri modeline hiçbir
+    // şey katmazdı — bayrağın yokluğu zaten "kasa değil" demek.
+    ...(row.is_cash_account ? { isCashAccount: true } : {}),
   }
 }
 

@@ -210,3 +210,88 @@ describe('laggedCursor', () => {
     expect(laggedCursor('bir sey degil')).toBeNull()
   })
 })
+
+// Kasa: paranın girip çıktığı portföy.
+describe('setCashAccount', () => {
+  const P = (id, over = {}) => ({ id, name: id, color: '#000', ...over })
+
+  it('birini isaretler', () => {
+    seed({ subPortfolios: [P('kasa'), P('t3')] })
+    usePortfolioStore.getState().setCashAccount('kasa')
+    const byId = Object.fromEntries(usePortfolioStore.getState().subPortfolios.map((p) => [p.id, p]))
+    expect(byId.kasa.isCashAccount).toBe(true)
+    // toBe(false) DEGIL: setCashAccount zaten eslesen portfoylere hic
+    // dokunmuyor, cunku dokunmak onlari bosuna senkron kuyruguna sokardi. Yani
+    // isaretsiz bir portfoyde alan hic yazilmamis kalabiliyor. Bayragin
+    // YOKLUGU zaten "kasa degil" demek; okuyan her yer Boolean()'dan geciriyor.
+    expect(byId.t3.isCashAccount).toBeFalsy()
+  })
+
+  // "Paranin girdigi yer" birden fazla olamaz — olursa soru tekrar cevapsiz
+  // kalir. Kullanicidan once eskisini kapatmasini istemek, unutuldugunda iki
+  // kasali ve sessizce anlamsiz bir duruma yol acardi.
+  it('yenisini isaretlemek eskisinin isaretini kaldirir', () => {
+    seed({ subPortfolios: [P('kasa', { isCashAccount: true }), P('t3')] })
+    usePortfolioStore.getState().setCashAccount('t3')
+    const byId = Object.fromEntries(usePortfolioStore.getState().subPortfolios.map((p) => [p.id, p]))
+    expect(byId.kasa.isCashAccount).toBe(false)
+    expect(byId.t3.isCashAccount).toBe(true)
+  })
+
+  it('null hepsini temizler', () => {
+    seed({ subPortfolios: [P('kasa', { isCashAccount: true })] })
+    usePortfolioStore.getState().setCashAccount(null)
+    expect(usePortfolioStore.getState().subPortfolios[0].isCashAccount).toBe(false)
+  })
+
+  // Degisen portfoy senkrona girmeli, degismeyen girmemeli: gereksiz gonderim
+  // her turda tekrarlanir ve outbox hic bosalmamis gibi gorunur.
+  it('yalnizca degisen portfoyler kutuya girer', () => {
+    seed({ subPortfolios: [P('kasa'), P('t3'), P('mixed')] })
+    usePortfolioStore.getState().setCashAccount('kasa')
+    expect(Object.keys(usePortfolioStore.getState().outbox.portfolios)).toEqual(['kasa'])
+  })
+})
+
+describe('setOpeningBalance', () => {
+  const P = (id) => ({ id, name: id, color: '#000' })
+  const openings = () => usePortfolioStore.getState().transactions.filter((t) => t.type === 'opening')
+
+  it('yoksa olusturur', () => {
+    seed({ subPortfolios: [P('t3')] })
+    usePortfolioStore.getState().setOpeningBalance('t3', { amount: 50000, date: '2023-01-01' })
+    expect(openings()).toHaveLength(1)
+    expect(openings()[0].price).toBe(50000)
+    expect(openings()[0].assetType).toBe('cash')
+  })
+
+  // Ikinci bir kayit bir duzeltme degil, sessizce ikiye katlanmis bir bakiye
+  // olurdu — ve hicbir ekran "burada iki baslangic var" demezdi.
+  it('varsa gunceller, ikinciyi olusturmaz', () => {
+    seed({ subPortfolios: [P('t3')] })
+    const set = usePortfolioStore.getState().setOpeningBalance
+    set('t3', { amount: 50000, date: '2023-01-01' })
+    set('t3', { amount: 75000, date: '2023-01-01' })
+    expect(openings()).toHaveLength(1)
+    expect(openings()[0].price).toBe(75000)
+  })
+
+  it('sifir ya da bos verilince kaydi siler', () => {
+    seed({ subPortfolios: [P('t3')] })
+    const set = usePortfolioStore.getState().setOpeningBalance
+    set('t3', { amount: 50000, date: '2023-01-01' })
+    const id = openings()[0].id
+    set('t3', { amount: '' })
+    expect(openings()).toHaveLength(0)
+    // Silme sunucuya da gitmeli, yoksa bir sonraki cekmede geri gelir.
+    expect(usePortfolioStore.getState().outbox.transactions[id]).toBe('delete')
+  })
+
+  it('her portfoy kendi baslangicini tutar', () => {
+    seed({ subPortfolios: [P('t3'), P('mixed')] })
+    const set = usePortfolioStore.getState().setOpeningBalance
+    set('t3', { amount: 1000, date: '2023-01-01' })
+    set('mixed', { amount: 2000, date: '2023-01-01' })
+    expect(openings()).toHaveLength(2)
+  })
+})
