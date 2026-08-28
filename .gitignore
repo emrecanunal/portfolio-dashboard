@@ -10,3 +10,6 @@ portfolio-backup-*.json
 portfolio-private*.json
 *-private.json
 t3-portfolio*.json
+
+# Cihazdaki git dosya silemiyor; kilit dosyaları buraya taşınıyor.
+_to_delete/
