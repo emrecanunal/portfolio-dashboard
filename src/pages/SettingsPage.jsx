@@ -28,7 +28,9 @@ export default function SettingsPage() {
   const renameSubPortfolio = usePortfolioStore((s) => s.renameSubPortfolio)
   const setCashAccount = usePortfolioStore((s) => s.setCashAccount)
   const setOpeningBalance = usePortfolioStore((s) => s.setOpeningBalance)
-  const deleteSubPortfolio = usePortfolioStore((s) => s.deleteSubPortfolio)
+  const deleteSubPortfolioWithTransactions = usePortfolioStore(
+    (s) => s.deleteSubPortfolioWithTransactions,
+  )
   const loadDemoData = usePortfolioStore((s) => s.loadDemoData)
   const clearAllTransactions = usePortfolioStore((s) => s.clearAllTransactions)
   const markBackedUp = usePortfolioStore((s) => s.markBackedUp)
@@ -154,11 +156,10 @@ export default function SettingsPage() {
     if (!deleteTarget) return
     // An empty portfolio is a name; one with transactions in it is data.
     if ((txnsByPortfolio.get(deleteTarget.id) || 0) > 0) downloadSafetyBackup()
-    deleteSubPortfolio(deleteTarget.id)
-    // Also remove transactions in that portfolio
-    const portfolioId = deleteTarget.id
-    const remaining = transactions.filter((t) => t.portfolioId !== portfolioId)
-    usePortfolioStore.setState({ transactions: remaining })
+    // Portföy ve işlemleri TEK eylemde gidiyor. Daha önce burada işlemler ham
+    // bir setState ile süzülüyordu; o çağrı outbox'a dokunmadığı için sunucuya
+    // mezar taşı gitmiyor ve satırlar orada hayatta kalıyordu.
+    deleteSubPortfolioWithTransactions(deleteTarget.id)
   }
 
   // Data management confirm dialogs

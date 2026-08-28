@@ -67,3 +67,44 @@ describe('loadDemoData', () => {
     expect(settings.baseCurrency).toBe('USD')
   })
 })
+
+// 28 Ağustos'un ikinci hatası. Portföy silme iki adımdaydı: eylem portföyü
+// mezar taşıyla işaretliyor, ekran ise işlemleri ham bir setState ile süzüyordu.
+// Ham setState outbox'a dokunmaz — o yüzden işlem satırları için sunucuya
+// hiçbir silme gitmiyor, satırlar orada hayatta kalıyor ve baştan çeken bir
+// cihaza sahipsiz olarak dönüyorlardı. Bu test tam olarak o boşluğu tutuyor:
+// yerelden gitmiş olması yetmez, KUTUDA silme işareti olmalı.
+describe('deleteSubPortfolioWithTransactions', () => {
+  it('marks the portfolio AND every transaction in it as deleted in the outbox', () => {
+    usePortfolioStore.getState().clearAllTransactions()
+    usePortfolioStore.getState().addSubPortfolio('Gidecek')
+    const doomed = usePortfolioStore.getState().subPortfolios.at(-1)
+    const keeper = usePortfolioStore.getState().subPortfolios[0]
+
+    usePortfolioStore.getState().addTransaction({
+      portfolioId: doomed.id, type: 'buy', assetType: 'bist', symbol: 'THYAO',
+      quantity: 1, price: 100, fee: 0, currency: 'TRY', date: '2026-01-02',
+    })
+    usePortfolioStore.getState().addTransaction({
+      portfolioId: keeper.id, type: 'buy', assetType: 'bist', symbol: 'ASELS',
+      quantity: 1, price: 100, fee: 0, currency: 'TRY', date: '2026-01-02',
+    })
+
+    const before = usePortfolioStore.getState().transactions
+    const goingId = before.find((t) => t.portfolioId === doomed.id).id
+    const stayingId = before.find((t) => t.portfolioId === keeper.id).id
+
+    usePortfolioStore.getState().deleteSubPortfolioWithTransactions(doomed.id)
+
+    const { subPortfolios, transactions, outbox } = usePortfolioStore.getState()
+    expect(subPortfolios.map((p) => p.id)).not.toContain(doomed.id)
+    expect(transactions.map((t) => t.id)).not.toContain(goingId)
+
+    expect(outbox.portfolios[doomed.id]).toBe('delete')
+    expect(outbox.transactions[goingId]).toBe('delete')
+
+    // Komşu portföyün işlemi silme işareti almamalı.
+    expect(transactions.map((t) => t.id)).toContain(stayingId)
+    expect(outbox.transactions[stayingId]).not.toBe('delete')
+  })
+})

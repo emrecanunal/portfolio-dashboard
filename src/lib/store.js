@@ -225,6 +225,38 @@ export const usePortfolioStore = create(
           outbox: mark(s.outbox, 'portfolios', id, 'delete'),
         })),
 
+      /**
+       * Bir portföyü İÇİNDEKİLERLE BİRLİKTE sil.
+       *
+       * NEDEN AYRI BİR EYLEM
+       *
+       * Portföyü silmek işlemlerini de silmek demek, ama bunu iki adımda
+       * yapmak — önce deleteSubPortfolio, sonra ham bir setState ile
+       * işlemleri süzmek — sessiz bir veri sızıntısı üretiyordu: ham setState
+       * outbox'a dokunmuyor, dolayısıyla o işlemler için sunucuya HİÇBİR
+       * mezar taşı gitmiyor. Satırlar sunucuda hayatta kalıyor; portföy
+       * listeden düşüyor ama işlemleri toplamda saymaya devam ediyor ve yeni
+       * bir cihaz baştan çektiğinde sahipsiz olarak geri geliyorlar.
+       *
+       * 28 Ağustos'ta ekranda görülen tam olarak buydu: bir cihazda 4 portföy,
+       * diğerinde 5 ve arada 125.732 ₺'lik açıklanamayan bir fark.
+       *
+       * Silme ve mezar taşları TEK set() içinde: ikisinin arasına düşen bir
+       * senkron turu, yarısı işaretlenmiş bir durumu göndermiş olurdu.
+       */
+      deleteSubPortfolioWithTransactions: (id) =>
+        set((s) => {
+          let outbox = mark(s.outbox, 'portfolios', id, 'delete')
+          for (const t of s.transactions) {
+            if (t.portfolioId === id) outbox = mark(outbox, 'transactions', t.id, 'delete')
+          }
+          return {
+            subPortfolios: s.subPortfolios.filter((p) => p.id !== id),
+            transactions: s.transactions.filter((t) => t.portfolioId !== id),
+            outbox,
+          }
+        }),
+
       updateSettings: (patch) =>
         set((s) => ({
           settings: { ...s.settings, ...patch },
