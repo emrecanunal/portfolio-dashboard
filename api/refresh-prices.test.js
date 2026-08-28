@@ -178,3 +178,72 @@ describe('elde tutulmayan sembol cekilmez', () => {
     expect(res.out.body.fetched).toBe(0)
   })
 })
+
+// PGRST102: "All object keys must match".
+//
+// PostgREST toplu eklemede her nesnenin aynı anahtar kümesini istiyor.
+// JSON.stringify `undefined` degerli anahtarlari dusurdugu icin, kaynaklardan
+// biri bir alani doldurmadiginda satirlar sessizce farkli sekillere buruunuyor
+// ve TUM yazma reddediliyor — tek bir sembol yuzunden hicbir fiyat
+// guncellenmiyor.
+//
+// Gercekte olan buydu: api/bist.js donusunde `source` yok, api/tefas.js'te var.
+describe('satir sekli: butun satirlar ayni anahtarlari tasir', () => {
+  const keysOf = (rows) => [...new Set(rows.flatMap((r) => Object.keys(r)))].sort()
+
+  // Kaynaklarin gercek dunyadaki cesitliligi: BIST source'suz, TEFAS ad ve
+  // source ile, Finnhub tam takim.
+  const HELD = [
+    { symbol: 'ASELS', assetType: 'bist' },
+    { symbol: 'AFA', assetType: 'tefas' },
+    { symbol: 'AAPL', assetType: 'global' },
+  ]
+  const QUOTES = {
+    ASELS: { price: 78.4, currency: 'TRY', previousClose: 77 },
+    AFA: { price: 0.045, currency: 'TRY', name: 'Ata Portfoy', source: 'tefas' },
+    AAPL: { price: 224.5, currency: 'USD', source: 'finnhub' },
+  }
+
+  it('fiyat satirlarinin anahtar kumeleri ozdes', async () => {
+    const { _priceRow } = await import('./refresh-prices.js')
+    const rows = HELD.map((h) => _priceRow(h, QUOTES[h.symbol], 'NOW'))
+    expect(rows).toHaveLength(3)
+    for (const r of rows) expect(Object.keys(r).sort()).toEqual(keysOf(rows))
+  })
+
+  it('enstruman satirlarinin anahtar kumeleri ozdes', async () => {
+    const { _instrumentRow } = await import('./refresh-prices.js')
+    const rows = HELD.map((h) => _instrumentRow(h, QUOTES[h.symbol], 'NOW'))
+    for (const r of rows) expect(Object.keys(r).sort()).toEqual(keysOf(rows))
+  })
+
+  it('hicbir alan undefined kalmaz — undefined JSON dan duser', async () => {
+    const { _priceRow, _instrumentRow } = await import('./refresh-prices.js')
+    for (const h of HELD) {
+      for (const row of [_priceRow(h, QUOTES[h.symbol], 'NOW'), _instrumentRow(h, QUOTES[h.symbol], 'NOW')]) {
+        for (const [k, v] of Object.entries(row)) {
+          expect(v, `${h.symbol}.${k} undefined`).not.toBeUndefined()
+        }
+      }
+    }
+  })
+
+  // currency NOT NULL. Kaynak soylemezse varlik turunden cikiyor; bos
+  // birakmak satiri veritabaninda reddettirirdi.
+  it('para birimi soylenmezse varlik turunden cikar', async () => {
+    const { _priceRow } = await import('./refresh-prices.js')
+    expect(_priceRow({ symbol: 'X', assetType: 'bist' }, { price: 1 }, 'N').currency).toBe('TRY')
+    expect(_priceRow({ symbol: 'Y', assetType: 'global' }, { price: 1 }, 'N').currency).toBe('USD')
+    // Kaynak soyluyorsa onun dedigi gecerli.
+    expect(_priceRow({ symbol: 'Z', assetType: 'tefas' }, { price: 1, currency: 'EUR' }, 'N').currency).toBe('EUR')
+  })
+
+  // Fiyati gelmeyen sembol satir uretmemeli. null fiyat yazmak, pozisyonu
+  // portfoyden silmekle ayni kapiya cikardi.
+  it('fiyati olmayan sembol satir uretmez', async () => {
+    const { _priceRow } = await import('./refresh-prices.js')
+    expect(_priceRow({ symbol: 'X', assetType: 'bist' }, undefined, 'N')).toBeNull()
+    expect(_priceRow({ symbol: 'X', assetType: 'bist' }, { price: null }, 'N')).toBeNull()
+    expect(_priceRow({ symbol: 'X', assetType: 'bist' }, { price: NaN }, 'N')).toBeNull()
+  })
+})

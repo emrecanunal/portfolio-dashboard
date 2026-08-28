@@ -62,27 +62,9 @@ export default async function handler(req, res) {
 
     const { quotes, errors, sources } = await fetchFromSources(wanted, requested)
 
-    const written = await writePrices(
-      Object.entries(quotes).map(([symbol, q]) => ({
-        symbol,
-        price: q.price,
-        currency: q.currency,
-        source: q.source,
-        fetched_at: new Date().toISOString(),
-      })),
-    )
-
-    await writeInstruments(
-      wanted
-        .filter((h) => quotes[h.symbol])
-        .map((h) => ({
-          symbol: h.symbol,
-          asset_type: h.assetType,
-          currency: quotes[h.symbol].currency,
-          source: quotes[h.symbol].source,
-          updated_at: new Date().toISOString(),
-        })),
-    )
+    const now = new Date().toISOString()
+    const written = await writePrices(wanted.map((h) => priceRow(h, quotes[h.symbol], now)).filter(Boolean))
+    await writeInstruments(wanted.map((h) => instrumentRow(h, quotes[h.symbol], now)).filter(Boolean))
 
     return res.status(200).json({
       ok: true,
@@ -182,4 +164,50 @@ async function fetchFromSources(held, requested) {
   return { quotes, errors, sources }
 }
 
-export { authorize as _authorize, parseSources as _parseSources }
+// SATIRLARI KAYNAĞIN ŞEKLİNE BIRAKMA
+//
+// PostgREST toplu eklemede her nesnenin AYNI anahtar kümesine sahip olmasını
+// şart koşuyor; aksi hâlde PGRST102 "All object keys must match" ile reddediyor.
+// JSON.stringify `undefined` değerli anahtarları düşürdüğü için, üç kaynaktan
+// biri bir alanı doldurmadığında satırlar sessizce farklı şekillere bürünüyor
+// ve TÜM yazma başarısız oluyor — tek bir sembol yüzünden hiçbir fiyat
+// güncellenmiyor.
+//
+// Gerçekte olan buydu: api/bist.js dönüşünde `source` yok, api/tefas.js'te var.
+//
+// Bu yüzden satırlar burada açıkça kuruluyor. Her alanın bir değeri var ve
+// hiçbiri yukarı akıştan gelen nesnenin şekline bağlı değil. Yeni bir kaynak
+// eklendiğinde de bu geçerli kalıyor.
+
+// Para birimi bilinmiyorsa varlık türünden çıkıyor. Tahmin değil: BIST ve TEFAS
+// tanımı gereği TRY, global uçlarımız USD döndürüyor. Yine de kaynağın söylediği
+// öncelikli — bir gün EUR cinsi bir fon eklenirse burası yalan söylemesin.
+function currencyFor(assetType, quote) {
+  if (quote?.currency) return quote.currency
+  return assetType === 'global' ? 'USD' : 'TRY'
+}
+
+function priceRow(held, quote, now) {
+  if (!quote || typeof quote.price !== 'number' || !isFinite(quote.price)) return null
+  return {
+    symbol: held.symbol,
+    price: quote.price,
+    currency: currencyFor(held.assetType, quote),
+    source: quote.source || held.assetType,
+    fetched_at: now,
+  }
+}
+
+function instrumentRow(held, quote, now) {
+  if (!quote) return null
+  return {
+    symbol: held.symbol,
+    asset_type: held.assetType,
+    currency: currencyFor(held.assetType, quote),
+    display_name: quote.name || null,
+    source: quote.source || held.assetType,
+    updated_at: now,
+  }
+}
+
+export { authorize as _authorize, parseSources as _parseSources, priceRow as _priceRow, instrumentRow as _instrumentRow }
