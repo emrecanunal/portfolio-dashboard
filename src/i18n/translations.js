@@ -114,6 +114,11 @@ export const translations = {
       addTransaction: 'Add transaction',
       lastNMonths: 'Last {n} months',
       allTimeRange: 'All time',
+      positionBreakdown: 'Positions',
+      positionBreakdownDesc: 'What this portfolio is made of, largest first',
+      otherPositions: 'Other ({n} more)',
+      shareOfTotal: 'This portfolio is {pct}% of everything you hold',
+      shareOfTotalDesc: 'FIRE progress is measured across all portfolios together — money goes into the whole, not into one of them.',
     },
     fire: {
       progress: 'FIRE progress',
@@ -518,6 +523,11 @@ export const translations = {
       addTransaction: 'İşlem ekle',
       lastNMonths: 'Son {n} ay',
       allTimeRange: 'Tüm zamanlar',
+      positionBreakdown: 'Pozisyonlar',
+      positionBreakdownDesc: 'Bu portföy nelerden oluşuyor, büyükten küçüğe',
+      otherPositions: 'Diğer ({n} kalem)',
+      shareOfTotal: 'Bu portföy tüm varlığının %{pct}\'i',
+      shareOfTotalDesc: 'FIRE ilerlemesi portföylerin tamamı üzerinden ölçülüyor — para bir alt portföye değil, bütününe giriyor.',
     },
     fire: {
       progress: 'FIRE ilerleme',

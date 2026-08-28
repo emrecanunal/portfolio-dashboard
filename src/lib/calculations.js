@@ -475,6 +475,80 @@ export function computeAllocation(summary, cashByCurrency = null, fxRates = null
   return result
 }
 
+/**
+ * Dağılım, varlık sınıfına göre değil TEK TEK POZİSYONLARA göre.
+ *
+ * NEDEN AYRI BİR FONKSİYON
+ *
+ * computeAllocation() "BIST %45, nakit %15" diyor ve ana sayfada doğru soru bu:
+ * varlık sınıfları arasında nasıl yayılmışım. Ama tek bir alt portföyün içinde
+ * aynı soru anlamsız — T3'ün %97'si BIST, yani tek dilim. Orada sorulan soru
+ * "bu portföy hangi pozisyonlardan oluşuyor".
+ *
+ * KUYRUK NEDEN TOPLANIYOR
+ *
+ * 30 pozisyonun 30'unu ayrı ayrı renklendirmek mümkün değil: kategorik paletler
+ * 8 renkte tükeniyor ve ötesi renk körü bir okuyucu için ayırt edilemez hâle
+ * geliyor. Bu yüzden ilk `topN` kalıyor, gerisi tek bir "diğer" satırında
+ * toplanıyor — ve kaç kalem olduğu da yazıyor ki gizlenen şeyin büyüklüğü
+ * belirsiz kalmasın.
+ *
+ * Nakit para birimi başına ayrı satır: 10.000 TL ile 10.000 USD aynı satırda
+ * toplanırsa ortaya ne olduğu belirsiz bir sayı çıkar.
+ *
+ * @returns {Array<{key, label, kind, value, pct, count?}>} büyükten küçüğe
+ */
+export function computeHoldingAllocation(summary, cashByCurrency = null, fxRates = null, topN = 12) {
+  const { holdings, cashTotal, totalValue } = summary
+  const rows = []
+
+  for (const h of holdings) {
+    if (h.marketValueTRY <= 0) continue
+    rows.push({ key: `h_${h.symbol}`, label: h.symbol, kind: h.assetType, value: h.marketValueTRY })
+  }
+
+  if (cashByCurrency && fxRates) {
+    for (const [ccy, amount] of cashByCurrency) {
+      if (!amount || amount <= 0) continue
+      rows.push({
+        key: `cash_${ccy}`,
+        label: ccy,
+        kind: 'cash',
+        currency: ccy,
+        nativeValue: amount,
+        value: convertToTRY(amount, ccy, fxRates),
+      })
+    }
+  } else if (cashTotal > 0) {
+    rows.push({ key: 'cash', label: 'cash', kind: 'cash', value: cashTotal })
+  }
+
+  rows.sort((a, b) => b.value - a.value)
+
+  const pct = (v) => (totalValue > 0 ? (v / totalValue) * 100 : 0)
+
+  // topN + 1 kalem varsa katlamanın anlamı yok: "diğer (1 kalem)" satırı,
+  // kalemin kendisiyle aynı yeri kaplayıp adını saklamaktan ibaret olurdu.
+  if (rows.length <= topN + 1) {
+    return rows.map((r) => ({ ...r, pct: pct(r.value) }))
+  }
+
+  const head = rows.slice(0, topN).map((r) => ({ ...r, pct: pct(r.value) }))
+  const tail = rows.slice(topN)
+  const tailValue = tail.reduce((sum, r) => sum + r.value, 0)
+
+  head.push({
+    key: 'other',
+    label: 'other',
+    kind: 'other',
+    value: tailValue,
+    pct: pct(tailValue),
+    count: tail.length,
+  })
+
+  return head
+}
+
 // Detailed breakdown for the AllocationBreakdown widget.
 // For each asset category, returns the bucket totals AND the list of holdings
 // inside it (so the UI can expand to show positions).

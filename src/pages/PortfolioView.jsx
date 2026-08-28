@@ -8,8 +8,16 @@
 //   - Master shows the sub-portfolios card; sub-views skip it (no nesting needed)
 //   - Sub-views show a header with the portfolio's name + back link
 //   - All KPIs/charts/transactions are filtered to the portfolio when scoped
-//   - FIRE/savings stay GLOBAL (FIRE goal is across all portfolios) on master,
-//     and are also computed against the scoped slice on sub-views for context
+//   - FIRE/savings appear ONLY on master. Para bir alt portföye değil, portföyün
+//     bütününe giriyor; alt portföye düşen pay bir hedef değil, bir dağıtım.
+//     Eskiden alt görünümlerde de gösteriliyordu ve yanlış okunmaya açıktı:
+//     her alt portföy KENDİ değerini AYNI küresel hedefe bölüyor, yani üç
+//     portföyün %2,7 + %1,2 + %0,5'i toplanınca gerçek olan %4,4 çıkıyordu —
+//     ama ekranda hiçbir şey bunu söylemiyordu. Yerine "toplamın %X'i" geldi:
+//     uydurma bir hedef yaratmadan bu portföyün ağırlığını söylüyor.
+//   - Dağılım master'da varlık sınıfına göre (halka), alt görünümde tek tek
+//     pozisyonlara göre (sıralı çubuklar). Alt portföyde "%97 BIST" bir bilgi
+//     değil; "hangi pozisyonlardan oluşuyor" bilgi.
 
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -20,6 +28,7 @@ import {
   computePortfolioSummary,
   computeAllocation,
   computeAllocationDetail,
+  computeHoldingAllocation,
   computeCashByCurrency,
   computeDayChange,
   computePerformanceSeries,
@@ -33,6 +42,7 @@ import { formatCurrency, formatPercent, formatSignedCurrency, convertFromTRY } f
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
 import { AllocationDonut } from '../components/charts/AllocationDonut.jsx'
+import { HoldingAllocationBars } from '../components/charts/HoldingAllocationBars.jsx'
 import { AllocationBreakdown } from '../components/AllocationBreakdown.jsx'
 import { PerformanceLine } from '../components/charts/PerformanceLine.jsx'
 import { FireProgressCard } from '../components/charts/FireProgressCard.jsx'
@@ -84,6 +94,23 @@ export function PortfolioView({ scope = { type: 'master' } }) {
   const allocationDetail = useMemo(
     () => computeAllocationDetail(summary, priceCache, settings.fxRates, cashByCurrency),
     [summary, priceCache, settings.fxRates, cashByCurrency]
+  )
+
+  // Alt görünümün dağılımı: varlık sınıfı değil, tek tek pozisyonlar.
+  // İlk 12 + "diğer" — kategorik paletler sekiz renkte tükendiği için tamamını
+  // ayrı ayrı boyamak mümkün değil, ama burada kimliği renk değil ETİKET
+  // taşıdığı için 12 kalem sorunsuz okunuyor.
+  const holdingAllocation = useMemo(
+    () => (isMaster ? [] : computeHoldingAllocation(summary, cashByCurrency, settings.fxRates, 12)),
+    [isMaster, summary, cashByCurrency, settings.fxRates]
+  )
+
+  // Alt görünümde "toplamın %X'i" için gereken payda. Master'da hesaplanmıyor:
+  // orada zaten kendisi toplam.
+  const masterTotalTRY = useMemo(
+    () => (isMaster ? summary.totalValue
+                    : computePortfolioSummary(transactions, priceCache, settings.fxRates).totalValue),
+    [isMaster, summary.totalValue, transactions, priceCache, settings.fxRates]
   )
 
   // The same selector that drives FIRE lookback also drives the chart range.
@@ -254,30 +281,43 @@ export function PortfolioView({ scope = { type: 'master' } }) {
         />
       </div>
 
-      {/* === FIRE CARD (with embedded savings) === */}
-      <FireProgressCard
-        currentValueTRY={summary.totalValue}
-        currentValueUSD={currentUSD}
-        targetUSD={fireTargetUSD}
-        targetTRY={targetTRY}
-        pct={firePct}
-        etaText={formatEta(monthsToFire, t)}
-        avgSavingsTRY={fireMetrics.avgMonthlySavingsTRY}
-        avgGrowthPct={fireMetrics.avgMonthlyGrowthPct}
-        annualizedReturn={fireMetrics.annualizedReturn}
-        savingsSeries={savingsSeries}
-        monthlyExpensesTRY={monthlyExpensesTRY}
-        fireMultiplier={activeStage.multiplier}
-      />
+      {/* === FIRE (yalnızca master) / PAY SATIRI (alt görünüm) === */}
+      {isMaster ? (
+        <FireProgressCard
+          currentValueTRY={summary.totalValue}
+          currentValueUSD={currentUSD}
+          targetUSD={fireTargetUSD}
+          targetTRY={targetTRY}
+          pct={firePct}
+          etaText={formatEta(monthsToFire, t)}
+          avgSavingsTRY={fireMetrics.avgMonthlySavingsTRY}
+          avgGrowthPct={fireMetrics.avgMonthlyGrowthPct}
+          annualizedReturn={fireMetrics.annualizedReturn}
+          savingsSeries={savingsSeries}
+          monthlyExpensesTRY={monthlyExpensesTRY}
+          fireMultiplier={activeStage.multiplier}
+        />
+      ) : (
+        <ShareOfTotal shareTRY={summary.totalValue} totalTRY={masterTotalTRY} />
+      )}
 
       {/* === ALLOCATION + PERFORMANCE === */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-3">
         <Card>
           <CardHeader>
-            <CardTitle>{t.dashboard.assetAllocation}</CardTitle>
+            <div>
+              <CardTitle>
+                {isMaster ? t.dashboard.assetAllocation : t.dashboard.positionBreakdown}
+              </CardTitle>
+              {!isMaster && (
+                <CardSubtitle>{t.dashboard.positionBreakdownDesc}</CardSubtitle>
+              )}
+            </div>
           </CardHeader>
           <CardBody>
-            <AllocationDonut allocation={allocation} />
+            {isMaster
+              ? <AllocationDonut allocation={allocation} />
+              : <HoldingAllocationBars allocation={holdingAllocation} />}
           </CardBody>
         </Card>
 
@@ -426,5 +466,43 @@ export function PortfolioView({ scope = { type: 'master' } }) {
         defaultPortfolioId={portfolioId}
       />
     </div>
+  )
+}
+
+// Alt portföyün toplam içindeki ağırlığı.
+//
+// FIRE kartının yerini alıyor ve neden aldığını anlatmaya değer: FIRE hedefi
+// tek ve küresel. Alt portföyde göstermek, her portföyün kendi hedefi varmış
+// izlenimi veriyordu — üstelik üçünün yüzdeleri toplanınca gerçek olan çıkıyor,
+// yani sayılar "yanlış" değil, YANLIŞ OKUNMAYA AÇIKTI.
+//
+// Bunun yerine cevaplanan soru şu: bu portföy senin varlığının ne kadarı.
+// Uydurma bir hedef yok, toplanabilir bir sayı var.
+function ShareOfTotal({ shareTRY, totalTRY }) {
+  const { t, ti } = useT()
+  if (!(totalTRY > 0)) return null
+  const pct = (shareTRY / totalTRY) * 100
+
+  return (
+    <Card>
+      <CardBody className="pt-5 flex items-center gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-text-primary">
+            {ti(t.dashboard.shareOfTotal, { pct: pct.toFixed(1) })}
+          </div>
+          <div className="text-2xs text-text-tertiary mt-0.5">
+            {t.dashboard.shareOfTotalDesc}
+          </div>
+        </div>
+        <div className="w-32 shrink-0">
+          <div className="h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${Math.min(pct, 100)}%`, background: 'var(--chart-bar)' }}
+            />
+          </div>
+        </div>
+      </CardBody>
+    </Card>
   )
 }

@@ -39,6 +39,17 @@
      re-run it before changing either. */
   --chart-series-1: #059669; /* portfolio value */
   --chart-series-2: #3b82f6; /* money paid in */
+
+  /* Alt portföy pozisyon çubukları. Bu üçü KİMLİK taşımıyor — kimlik her
+     çubuğun yanındaki etikette. Yalnızca kalem türünü ayırıyorlar: varlık,
+     nakit, ve toplanmış kuyruk.
+     Mavi+yeşil çifti scripts/validate_palette.js'in beş kontrolünü de her iki
+     temada geçiyor (en kötü bitişik ΔE 22.7 deutan / 24.0 normal). Üçüncüsü
+     kasten vurgu-dışı gri: geri çekilmesi gereken bir kova, kategorik bir slot
+     değil — o yüzden kroma tabanına tabi değil. */
+  --chart-bar: #3b82f6;
+  --chart-bar-cash: #059669;
+  --chart-bar-muted: #52525b;
 }
 
 /* ========== LIGHT THEME ========== */
@@ -73,6 +84,10 @@
   /* Light mode gets its own steps, not an automatic flip of the dark ones. */
   --chart-series-1: #059669;
   --chart-series-2: #2563eb;
+
+  --chart-bar: #2563eb;
+  --chart-bar-cash: #059669;
+  --chart-bar-muted: #a1a1aa;
 }
 
 @layer base {

@@ -26,6 +26,7 @@ import {
   SETTLEMENT_TOLERANCE_DAYS,
   valueAtMonth,
   projectMonthsToFire,
+  computeHoldingAllocation,
 } from './calculations.js'
 import { computeStageTargets, computeJourneyPosition } from './fireStages.js'
 
@@ -777,5 +778,90 @@ describe('valueAtMonth', () => {
     })
     expect(fromCost.investedValue).toBeCloseTo(1000, 6)
     expect(fromCost.estimated).toBe(true)
+  })
+})
+
+// Alt portföy dağılımı: varlık sınıfı değil, tek tek pozisyonlar.
+//
+// Ana sayfada "BIST %45, nakit %15" doğru soruyu cevaplıyor. Tek bir alt
+// portföyde aynı soru anlamsız — T3'ün %97'si BIST, yani tek dilim. Orada
+// sorulan "bu portföy hangi pozisyonlardan oluşuyor".
+describe('computeHoldingAllocation', () => {
+  const H = (symbol, marketValueTRY, assetType = 'bist') => ({
+    symbol, assetType, marketValueTRY,
+  })
+  const summaryOf = (holdings, cashTotal = 0) => ({
+    holdings,
+    cashTotal,
+    totalValue: holdings.reduce((s, h) => s + h.marketValueTRY, 0) + cashTotal,
+  })
+
+  it('her pozisyon bir satir, buyukten kucuge', () => {
+    const rows = computeHoldingAllocation(summaryOf([H('A', 100), H('C', 300), H('B', 200)]))
+    expect(rows.map((r) => r.label)).toEqual(['C', 'B', 'A'])
+    expect(rows[0].pct).toBeCloseTo(50)
+  })
+
+  it('nakiti para birimi basina ayri satira koyar', () => {
+    const rows = computeHoldingAllocation(
+      summaryOf([H('A', 100)]),
+      new Map([['TRY', 50], ['USD', 10]]),
+      { TRY: 1, USD: 40 },
+    )
+    const cash = rows.filter((r) => r.kind === 'cash')
+    expect(cash.map((r) => r.label).sort()).toEqual(['TRY', 'USD'])
+    // 10 USD × 40 = 400 TRY, yani en buyuk kalem.
+    expect(rows[0].label).toBe('USD')
+    expect(rows[0].value).toBe(400)
+    expect(rows[0].nativeValue).toBe(10)
+  })
+
+  // 10 TL ile 10 USD ayni satirda toplanirsa ortaya ne oldugu belirsiz bir
+  // sayi cikar. Ayri satirlar, hem tutari hem para birimini korur.
+  it('farkli para birimlerindeki nakiti toplamaz', () => {
+    const rows = computeHoldingAllocation(
+      summaryOf([]),
+      new Map([['TRY', 100], ['USD', 100]]),
+      { TRY: 1, USD: 40 },
+    )
+    expect(rows).toHaveLength(2)
+  })
+
+  // Kategorik paletler sekiz renkte tukeniyor; 30 pozisyonu ayri ayri
+  // boyamak mumkun degil. Kuyruk tek satirda toplaniyor VE kac kalem oldugu
+  // yaziliyor, ki gizlenen seyin buyuklugu belirsiz kalmasin.
+  it('kuyrugu tek satirda toplar ve kac kalem oldugunu soyler', () => {
+    const many = Array.from({ length: 20 }, (_, i) => H(`S${i}`, 100 - i))
+    const rows = computeHoldingAllocation(summaryOf(many), null, null, 12)
+    expect(rows).toHaveLength(13)
+    const other = rows.at(-1)
+    expect(other.kind).toBe('other')
+    expect(other.count).toBe(8)
+  })
+
+  it('toplanan kuyrugun degeri, iceridekilerin toplami', () => {
+    const many = Array.from({ length: 15 }, () => H('X', 10))
+    const rows = computeHoldingAllocation(summaryOf(many), null, null, 12)
+    expect(rows.at(-1).value).toBe(30)      // 3 kalem × 10
+    expect(rows.reduce((s, r) => s + r.value, 0)).toBe(150)
+  })
+
+  // "Diger (1 kalem)" satiri, kalemin kendisiyle ayni yeri kaplayip adini
+  // saklamaktan ibaret olurdu.
+  it('tek kalem kalacaksa katlamaz', () => {
+    const rows = computeHoldingAllocation(
+      summaryOf(Array.from({ length: 13 }, (_, i) => H(`S${i}`, 10))), null, null, 12,
+    )
+    expect(rows).toHaveLength(13)
+    expect(rows.some((r) => r.kind === 'other')).toBe(false)
+  })
+
+  it('degeri sifir olan pozisyonu hic gostermez', () => {
+    const rows = computeHoldingAllocation(summaryOf([H('A', 100), H('B', 0)]))
+    expect(rows.map((r) => r.label)).toEqual(['A'])
+  })
+
+  it('bos portfoyde bos dizi', () => {
+    expect(computeHoldingAllocation(summaryOf([]))).toEqual([])
   })
 })
