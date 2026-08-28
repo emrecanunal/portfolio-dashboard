@@ -39,6 +39,7 @@ import {
 } from '../lib/calculations.js'
 import { computeStageTargets, getStageById } from '../lib/fireStages.js'
 import { formatCurrency, formatPercent, formatSignedCurrency, convertFromTRY } from '../lib/currency.js'
+import { formatRelativeTime } from '../lib/fxApi.js'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
 import { AllocationDonut } from '../components/charts/AllocationDonut.jsx'
@@ -52,7 +53,7 @@ import { StaleBackupBanner } from '../components/StaleBackupBanner.jsx'
 import { DataWarnings } from '../components/DataWarnings.jsx'
 
 export function PortfolioView({ scope = { type: 'master' } }) {
-  const { t, ti } = useT()
+  const { t, ti, lang } = useT()
   const transactions = usePortfolioStore((s) => s.transactions)
   const subPortfolios = usePortfolioStore((s) => s.subPortfolios)
   const priceCache = usePortfolioStore((s) => s.priceCache)
@@ -146,6 +147,31 @@ export function PortfolioView({ scope = { type: 'master' } }) {
 
   const targetTRY = fireTargetUSD * settings.fxRates.USD
   const currentUSD = convertFromTRY(summary.totalValue, 'USD', settings.fxRates)
+
+  // Net varlığın altındaki satır: "≈ $7.752 · 48,245 ₺/$ · 2 saat önce".
+  //
+  // Kur cihazlar arası KASTEN senkronlanmıyor (mapping.js · SYNCED_SETTINGS):
+  // kaydedilmiş bir kur anı kaydeder, veriyi değil, ve eski bir cihazınki
+  // yeninin üzerine yazarsa çevrilmiş her rakam sessizce şaşar. Bunun
+  // kaçınılmaz sonucu, iki cihazın aynı veriyle farklı toplam göstermesi — ve
+  // bu doğru davranış.
+  //
+  // Söylenmediği sürece doğru GÖRÜNMÜYOR ama. Telefonda 939 bin, bilgisayarda
+  // 926 bin gören biri veri kaybından şüpheleniyor; oysa aradaki tek fark
+  // 48,245 ile 49,92. Toplamın hangi kurla ve ne kadar eski bir kurla
+  // hesaplandığını yazmak farkı açıklanabilir kılıyor — kuru senkronlamanın
+  // bedelini ödemeden.
+  //
+  // Kur yoksa dolar karşılığı da anlamsız, o yüzden ikisi tek satırda.
+  const usdRate = settings.fxRates?.USD
+  const fxFetchedAt = settings.fxMeta?.fetchedAt
+  const fxSublabel = [
+    `≈ $${currentUSD.toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
+    usdRate ? `${usdRate.toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-US', { maximumFractionDigits: 3 })} ₺/$` : null,
+    fxFetchedAt ? formatRelativeTime(fxFetchedAt, lang) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const firePct = (currentUSD / fireTargetUSD) * 100
   const monthsToFire = projectMonthsToFire({
     currentValue: summary.totalValue,
@@ -249,7 +275,7 @@ export function PortfolioView({ scope = { type: 'master' } }) {
         <StatCard
           label={t.dashboard.netWorth}
           value={formatCurrency(summary.totalValue, 'TRY', { compact: true, decimals: 2 })}
-          sublabel={`≈ $${currentUSD.toLocaleString('en-US', { maximumFractionDigits: 0 })} USD`}
+          sublabel={fxSublabel}
         />
         <StatCard
           label={t.dashboard.dailyChange}
