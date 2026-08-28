@@ -27,10 +27,33 @@ create extension if not exists pg_net;
 -- erişimi olan herkes okuyabiliyor. CRON_SECRET'ı oraya yazmak, uç noktayı
 -- koruyan tek şeyi herkesin görebileceği bir yere koymak olurdu.
 --
--- ↓ ÖNCE BU İKİSİNİ KENDİ DEĞERLERİNLE ÇALIŞTIR ↓
+-- ↓ ÖNCE BUNU KENDİ DEĞERLERİNLE DOLDURUP ÇALIŞTIR ↓
+--
+-- create_secret DEĞİL: o, aynı adla ikinci kez çağrıldığında benzersizlik
+-- kısıtına takılıyor ve bu dosyanın "yeniden çalıştırılabilir" sözünü bozuyor.
+-- Adresi düzeltmek ya da sırrı döndürmek istediğinde de aynı duvara çarpardın.
+--
+-- Adresin sonunda / OLMAMALI: kod sonuna /api/refresh-prices ekliyor ve çift
+-- eğik çizgi 404 döner.
 -- ---------------------------------------------------------------------------
--- select vault.create_secret('https://SENIN-ADRESIN.vercel.app', 'app_base_url');
--- select vault.create_secret('BURAYA-URETTIGIN-SIR',             'cron_secret');
+/*
+do $$
+declare sid uuid;
+begin
+  select id into sid from vault.secrets where name = 'app_base_url';
+  if sid is null then perform vault.create_secret('https://SENIN-ADRESIN.vercel.app', 'app_base_url');
+  else                perform vault.update_secret(sid, 'https://SENIN-ADRESIN.vercel.app');
+  end if;
+
+  select id into sid from vault.secrets where name = 'cron_secret';
+  if sid is null then perform vault.create_secret('BURAYA-URETTIGIN-SIR', 'cron_secret');
+  else                perform vault.update_secret(sid, 'BURAYA-URETTIGIN-SIR');
+  end if;
+end $$;
+
+select name, decrypted_secret from vault.decrypted_secrets
+ where name in ('app_base_url', 'cron_secret');
+*/
 
 
 -- ---------------------------------------------------------------------------
