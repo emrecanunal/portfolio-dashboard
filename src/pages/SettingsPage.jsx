@@ -1301,8 +1301,19 @@ function ExportBackupActions() {
     // Download the current state first. Restore replaces everything and has no
     // undo, so the one thing that must not depend on the user having thought
     // ahead is being able to get back.
-    exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
-    markBackedUp()
+    //
+    // Ama bu bir NEZAKET, ön koşul değil. try/catch olmadan, tarayıcının indirmeyi
+    // engellediği her durumda — çoklu indirme uyarısı, disk izni, gizli sekme
+    // kısıtı — atılan hata restoreFromBackup'a hiç sıra gelmeden fonksiyonu
+    // kesiyordu. Kullanıcı onaya basıyor, hiçbir şey olmuyor, hiçbir şey de
+    // söylenmiyor. Yani güvenlik kopyası, kurtarmanın önünde durabiliyordu:
+    // veriyi korumak için konmuş adım, veriyi geri getirmeyi engelliyordu.
+    try {
+      exportJsonBackup({ transactions, subPortfolios, priceCache, priceHistory, fxHistory, settings })
+      markBackedUp()
+    } catch (err) {
+      console.warn('[restore] güvenlik kopyası indirilemedi, geri yükleme sürüyor:', err)
+    }
     restoreFromBackup(restoreConfirm.data)
     setSuccessMessage(
       ti(t.settingsPage.restoreSuccess, {
