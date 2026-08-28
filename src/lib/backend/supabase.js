@@ -224,3 +224,69 @@ export function subscribeToChanges(userId, onChange) {
 
   return () => c.removeChannel(channel)
 }
+
+// --- Fiyatlar (Faz 3) ------------------------------------------------------
+
+/**
+ * Paylaşılan fiyat tablosunu oku.
+ *
+ * Bu çağrı hiçbir dış kaynağa gitmiyor; yalnızca cron'un yazdığını okuyor.
+ * Yani bir cihazı ilk kez açtığında fiyatlar zaten oradadır — "güncelle"ye
+ * basmayı beklemez, kotadan yemez, TEFAS'ı rahatsız etmez.
+ */
+export async function readPrices() {
+  const c = getClient()
+  if (!c) return { ok: false, error: 'not-configured' }
+  try {
+    const [px, inst] = await Promise.all([
+      c.from('prices_latest').select('symbol, price, currency, source, fetched_at'),
+      c.from('instruments').select('symbol, display_name'),
+    ])
+    if (px.error) return { ok: false, error: px.error.message }
+
+    const names = new Map((inst.data || []).map((r) => [r.symbol, r.display_name]))
+    const quotes = {}
+    for (const row of px.data || []) {
+      quotes[row.symbol] = {
+        // numeric JSON'a metin olarak gelir; Number'a çevrilmezse
+        // calculations.js'in her toplaması string birleştirmesine döner.
+        price: Number(row.price),
+        currency: row.currency,
+        source: row.source || 'server',
+        fetchedAt: new Date(row.fetched_at).getTime(),
+        ...(names.get(row.symbol) ? { name: names.get(row.symbol) } : {}),
+      }
+    }
+    return { ok: true, quotes }
+  } catch (e) {
+    return { ok: false, error: e?.message || 'network' }
+  }
+}
+
+/**
+ * Oturumun erişim belirtecini EKLEYEREK istek atar.
+ *
+ * Belirteci dışarı vermek yerine isteği burada imzalıyoruz. Dışarı verseydik,
+ * dikişin "Supabase'e özgü hiçbir şey sızmaz" sözü ilk kullanımda delinirdi —
+ * ve elden ele dolaşan bir erişim belirteci, bir gün yanlışlıkla loglanacak
+ * şeylerin başında gelir.
+ */
+export async function authorizedFetch(path, options = {}) {
+  const c = getClient()
+  if (!c) return { ok: false, error: 'not-configured' }
+  try {
+    const { data } = await c.auth.getSession()
+    const token = data?.session?.access_token
+    if (!token) return { ok: false, error: 'no-session' }
+
+    const res = await fetch(path, {
+      ...options,
+      headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) return { ok: false, error: body?.error || `HTTP_${res.status}`, body }
+    return { ok: true, body }
+  } catch (e) {
+    return { ok: false, error: e?.message || 'network' }
+  }
+}

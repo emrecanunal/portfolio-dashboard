@@ -300,10 +300,76 @@ export const usePortfolioStore = create(
       // options.sources: limit to a subset, e.g. ['bist','global']. Auto-refresh
       //   passes this so funds aren't re-fetched on an equity tick.
       // Returns: { ok: boolean, fetched: number, errors: array, errorMessage?: string }
+      // Sunucu yazdığı fiyatları okur. Dış kaynağa GİTMEZ — cron ne yazdıysa o.
+      //
+      // Açılışta çağrılıyor, yani bir cihazı ilk kez açtığında fiyatlar zaten
+      // orada. Faz 3'ten önce her yeni tarayıcı boş bir fiyat önbelleğiyle
+      // açılıyor, her şeyi maliyetiyle değerliyor ve kullanıcı "P/L neden %0"
+      // diye soruyordu.
+      loadServerPrices: async () => {
+        const { isBackendConfigured, readPrices } = await import('./backend/index.js')
+        if (!isBackendConfigured()) return { ok: false, error: 'not-configured' }
+
+        const result = await readPrices()
+        if (!result.ok) return result
+
+        set((s) => {
+          const merged = { ...s.priceCache }
+          for (const [sym, q] of Object.entries(result.quotes)) {
+            // Elle girilmiş bir fiyat sunucununkinden yeniyse korunur: kullanıcı
+            // bir sembole bilerek değer yazdıysa, arka planda çalışan bir iş onu
+            // sessizce ezmemeli.
+            const local = merged[sym]
+            if (local?.source === 'manual' && (local.fetchedAt || 0) > q.fetchedAt) continue
+            merged[sym] = { ...local, ...q }
+          }
+          return { priceCache: merged }
+        })
+
+        return { ok: true, count: Object.keys(result.quotes).length }
+      },
+
       refreshPrices: async (onProgress, options = {}) => {
         const state = get()
         const apiKey = state.settings.finnhubApiKey?.trim()
         const sources = options.sources || ['bist', 'tefas', 'global']
+
+        // Sunucu varsa kaynaklara ORADAN gidiliyor: anahtar sunucuda, kota tek
+        // yerden harcanıyor, ve sonuç herkesin okuduğu tabloya yazılıyor. Üç
+        // cihazın aynı sembolü üç kez çekmesi böyle bitiyor.
+        const { isBackendConfigured, authorizedFetch } = await import('./backend/index.js')
+        if (isBackendConfigured()) {
+          const r = await authorizedFetch(`/api/refresh-prices?sources=${sources.join(',')}`, {
+            method: 'POST',
+          })
+          if (r.ok) {
+            await get().loadServerPrices()
+            set((s) => ({
+              settings: {
+                ...s.settings,
+                priceMeta: {
+                  ...s.settings.priceMeta,
+                  fetchedAt: Date.now(),
+                  lastError: null,
+                  lastErrorSymbols: (r.body?.errors || []).slice(0, 20),
+                  sourceStats: r.body?.sources || {},
+                  sourceFetchedAt: stampSources(s.settings.priceMeta?.sourceFetchedAt, sources),
+                },
+              },
+            }))
+            return { ok: true, fetched: r.body?.fetched ?? 0, errors: r.body?.errors || [], sourceStats: r.body?.sources || {} }
+          }
+          // Sunucu yolu çalışmadıysa doğrudan çekmeye DÜŞMÜYORUZ. Düşseydik,
+          // bozuk bir dağıtım fark edilmeden aylarca gizlenir ve kota yine
+          // cihaz başına harcanmaya devam ederdi.
+          set((s) => ({
+            settings: {
+              ...s.settings,
+              priceMeta: { ...s.settings.priceMeta, lastError: r.error || 'SERVER_REFRESH_FAILED' },
+            },
+          }))
+          return { ok: false, fetched: 0, errors: [{ symbol: '', error: r.error }], sourceStats: {} }
+        }
 
         try {
           const { fetchAllPrices } = await import('./priceApi.js')

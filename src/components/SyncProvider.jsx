@@ -37,6 +37,12 @@ export function SyncProvider({ userId }) {
 
     run()
 
+    // Fiyatlar senkronun parçası DEĞİL, ayrı bir okuma. Sebep: senkron
+    // kullanıcının verisini taşıyor, fiyatlar ise kimseye ait değil — sembole
+    // ait. İkisini tek tura bağlamak, bir fiyat okuması başarısız olduğunda
+    // işlem senkronunu da durdurmak olurdu.
+    usePortfolioStore.getState().loadServerPrices()
+
     // Store'un YALNIZCA outbox'ını dinliyoruz. Tüm store'a abone olsaydık,
     // her fiyat yenilemesi (dakikada bir, 147 sembol) bir senkron turu
     // tetiklerdi — oysa fiyatlar senkronlanmıyor bile.
@@ -48,7 +54,13 @@ export function SyncProvider({ userId }) {
       },
     )
 
-    const onVisible = () => { if (document.visibilityState === 'visible') run() }
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      run()
+      // Sekmeye dönerken fiyatlar da tazelensin: telefonu bırakıp masaüstüne
+      // geçtiğinde cron aradaki sürede birkaç tur atmış olabilir.
+      usePortfolioStore.getState().loadServerPrices()
+    }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', run)
 

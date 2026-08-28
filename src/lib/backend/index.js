@@ -101,4 +101,17 @@ export function subscribeToChanges(userId, onChange) {
   return supabase.subscribeToChanges(userId, onChange)
 }
 
+/**
+ * Paylaşılan fiyat tablosunu okur. Dış kaynağa gitmez.
+ * @returns {Promise<{ok, quotes?, error?}>}
+ */
+export function readPrices() {
+  return supabase.readPrices()
+}
+
+/** Oturum belirteciyle imzalanmış istek — kendi /api/* uçlarımız için. */
+export function authorizedFetch(path, options) {
+  return supabase.authorizedFetch(path, options)
+}
+
 export { SYNCED_SETTINGS, txToDb, txFromDb, portfolioToDb, portfolioFromDb, settingsToDb, settingsFromDb } from './mapping.js'
