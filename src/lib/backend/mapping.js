@@ -31,6 +31,12 @@ export function txToDb(tx, userId) {
     price: tx.price,
     fee: tx.fee ?? 0,
     currency: tx.currency,
+    // Takasın karşı bacağı: ne kadar, hangi para biriminde girdi. Bunlar
+    // taşınmazsa satır sunucudan çevrilen tutar OLMADAN döner ve cashDeltaTRY
+    // çıkışı sayıp girişi sıfır kabul eder — takas, portföyün nakdini
+    // çevrilen tutar kadar yer. Hiçbir hata çıkmaz, sayı makul görünür.
+    to_amount: tx.toAmount ?? null,
+    to_currency: tx.toCurrency ?? null,
     trade_date: tx.date,
     notes: tx.notes ?? '',
   }
@@ -51,6 +57,10 @@ export function txFromDb(row) {
     price: Number(row.price),
     fee: Number(row.fee ?? 0),
     currency: row.currency,
+    // to_portfolio_id ile aynı düzen: yalnızca doluyken taşınıyor, yoksa
+    // her alım satırı toAmount: null taşır ve gidip-gelme testi bozulur.
+    ...(row.to_amount != null ? { toAmount: Number(row.to_amount) } : {}),
+    ...(row.to_currency ? { toCurrency: row.to_currency } : {}),
     date: row.trade_date,
     notes: row.notes ?? '',
   }

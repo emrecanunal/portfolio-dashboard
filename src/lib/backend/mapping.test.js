@@ -31,6 +31,34 @@ describe('islem cevirisi', () => {
     expect(txFromDb(txToDb(TX, 'user-1'))).toEqual(TX)
   })
 
+  // Takasin KARSI bacagi. 3 Eylul 2026'ya kadar bu iki alan ceviride yoktu:
+  // satir sunucudan toAmount'suz donuyor, cashDeltaTRY cikisi sayip girisi
+  // sifir kabul ediyor ve takas, portfoyun nakdini cevrilen tutar kadar
+  // yiyordu. Tek cihazda hic gorunmuyor, ikinci cihaz acilinca para gidiyordu.
+  it('takasin karsi bacagini tasir', () => {
+    const EX = {
+      id: 'x1', portfolioId: 'kasa', type: 'exchange', assetType: 'cash',
+      symbol: 'TRY→USD', quantity: 226058, price: 1, fee: 0, currency: 'TRY',
+      toAmount: 5651.45, toCurrency: 'USD', date: '2026-09-03', notes: '',
+    }
+    expect(txFromDb(txToDb(EX, 'user-1'))).toEqual(EX)
+  })
+
+  it('toAmount metin gelse bile sayiya cevrilir', () => {
+    const local = txFromDb({
+      id: 'x', portfolio_id: 'kasa', type: 'exchange', asset_type: 'cash', symbol: 'TRY→USD',
+      quantity: '226058', price: '1', fee: '0', currency: 'TRY',
+      to_amount: '5651.45', to_currency: 'USD', trade_date: '2026-09-03', notes: null,
+    })
+    expect(local.toAmount).toBe(5651.45)
+  })
+
+  it('takas olmayan satira bos karsi bacak eklemez', () => {
+    const local = txFromDb(txToDb(TX, 'user-1'))
+    expect(local).not.toHaveProperty('toAmount')
+    expect(local).not.toHaveProperty('toCurrency')
+  })
+
   it('user_id ekler ama uygulama nesnesine sizdirmaz', () => {
     const db = txToDb(TX, 'user-1')
     expect(db.user_id).toBe('user-1')

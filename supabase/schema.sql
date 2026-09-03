@@ -127,6 +127,12 @@ create table if not exists public.transactions (
   -- Bütünlüğü istemci tarafındaki doğrulama koruyor (dataExport.js).
   to_portfolio_id text,
 
+  -- Yalnızca exchange'de dolu: takasın KARŞI bacağı. Kaynak taraf quantity +
+  -- currency, hedef taraf bunlar. İkisi olmadan satır yarım: uygulama çıkışı
+  -- görür, girişi göremez ve parayı yok sayar.
+  to_amount    numeric,
+  to_currency  text,
+
   updated_at   timestamptz not null default now(),
   deleted_at   timestamptz,
 
@@ -226,6 +232,8 @@ create table if not exists public.fx_monthly (
 -- ---------------------------------------------------------------------------
 
 alter table public.transactions add column if not exists to_portfolio_id text;
+alter table public.transactions add column if not exists to_amount numeric;
+alter table public.transactions add column if not exists to_currency text;
 alter table public.portfolios   add column if not exists is_cash_account boolean not null default false;
 
 -- Kısıt YENİDEN kuruluyor, çünkü eskisi 'transfer' ve 'opening'i tanımıyor ve
