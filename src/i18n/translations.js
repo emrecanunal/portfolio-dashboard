@@ -86,6 +86,7 @@ export const translations = {
       mixedCurrency: '{symbol} was traded in {currencies}. The position is valued entirely in {first} — one of the lots uses the wrong rate.',
       missingPrice: 'No price for {symbol}. It is being valued at its own cost, so its profit/loss reads as exactly 0%.',
       missingPriceMany: 'No price for {symbols}. They are valued at cost, so their profit/loss reads as exactly 0%.',
+      negativeCurrency: '{portfolio}: the {currency} balance is {amount} below zero. No {currency} ever entered this portfolio — an exchange is probably unrecorded.',
     },
     dashboard: {
       masterView: 'Master view · all portfolios',
@@ -205,6 +206,9 @@ export const translations = {
       // Cash warning
       cashWarning: 'Cash warning',
       cashWarningBody: 'This transaction will reduce your cash reserve from {current}% to {projected}% of your portfolio — below the {threshold}% threshold.',
+      currencyWarning: 'Different currency',
+      currencyWarningBody: '{portfolio} holds {have}; you are sending {amount}. A transfer does not convert currency — this entry would leave a negative {currency} balance in the source portfolio.',
+      currencyWarningHint: 'The correct way is two steps: an exchange inside {portfolio}, then transfer the {currency}.',
       cashAfterTxn: 'Cash after transaction',
       confirmCheckbox: 'I understand and want to proceed anyway',
       // Placeholders
@@ -510,6 +514,7 @@ export const translations = {
       mixedCurrency: '{symbol} {currencies} olarak işlem görmüş. Pozisyonun tamamı {first} sayılıyor — lotlardan biri yanlış kurla çevriliyor.',
       missingPrice: '{symbol} için fiyat yok. Kendi maliyetiyle değerleniyor, bu yüzden kâr/zararı tam %0 görünüyor.',
       missingPriceMany: '{symbols} için fiyat yok. Maliyetleriyle değerleniyorlar, bu yüzden kâr/zararları tam %0 görünüyor.',
+      negativeCurrency: '{portfolio}: {currency} bakiyesi {amount} eksiye düşmüş. Bu portföye hiç {currency} girmemiş — muhtemelen kaydedilmemiş bir takas var.',
     },
     dashboard: {
       masterView: 'Ana görünüm · tüm portföyler',
@@ -620,6 +625,9 @@ export const translations = {
       pleaseFillRequired: 'Lütfen tüm zorunlu alanları doldurun',
       cashWarning: 'Nakit uyarısı',
       cashWarningBody: "Bu işlem nakit rezervinizi portföyün %{current}'inden %{projected}'ine düşürecek — %{threshold} eşiğinin altında.",
+      currencyWarning: 'Farklı para birimi',
+      currencyWarningBody: '{portfolio} portföyünde {have} var; {amount} göndermeye çalışıyorsun. Transfer para birimi çevirmez — bu kayıt kaynak portföyde eksi bir {currency} bakiyesi bırakır.',
+      currencyWarningHint: 'Doğrusu iki adım: önce {portfolio} içinde takas, sonra {currency} transferi.',
       cashAfterTxn: 'İşlem sonrası nakit',
       confirmCheckbox: 'Anladım, yine de devam etmek istiyorum',
       placeholderSymbol: 'örn. ASELS, AAPL, VOO',

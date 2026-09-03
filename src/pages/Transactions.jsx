@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Plus, Search, Pencil, Trash2, ArrowUpDown, ArrowUp, ArrowDown, X as XIcon } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, ArrowUpDown, ArrowUp, ArrowDown, ArrowRight, X as XIcon } from 'lucide-react'
 import { usePortfolioStore } from '../lib/store.js'
+import { scopeTransactions } from '../lib/calculations.js'
 import { useT } from '../i18n/useT.js'
 import { convertToTRY, formatCurrency, formatFxRate, formatSignedCurrency, quoteFxRate } from '../lib/currency.js'
 import { Card, CardBody, Button, Badge } from '../components/ui/Primitives.jsx'
@@ -9,7 +10,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog.jsx'
 import { cn } from '../lib/utils.js'
 import { useMediaQuery, NARROW } from '../lib/useMediaQuery.js'
 
-const TYPE_FILTERS = ['all', 'buy', 'sell', 'deposit', 'withdraw', 'exchange']
+const TYPE_FILTERS = ['all', 'buy', 'sell', 'deposit', 'withdraw', 'exchange', 'transfer']
 
 export default function Transactions() {
   const { t, ti } = useT()
@@ -41,7 +42,10 @@ export default function Transactions() {
       list = list.filter((tx) => tx.type === typeFilter)
     }
     if (portfolioFilter !== 'all') {
-      list = list.filter((tx) => tx.portfolioId === portfolioFilter)
+      // Gelen transfer de bu portföyün kaydı: parayı o aldı. Süzgeç yalnızca
+      // tx.portfolioId'ye baksaydı, hedef portföyün listesinde bakiyeyi
+      // açıklayan satır hiç görünmezdi.
+      list = scopeTransactions(list, portfolioFilter)
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase()
@@ -276,6 +280,7 @@ export default function Transactions() {
                   key={tx.id}
                   tx={tx}
                   subPortfolio={subPortfolios.find((p) => p.id === tx.portfolioId)}
+                  toPortfolio={tx.toPortfolioId ? subPortfolios.find((p) => p.id === tx.toPortfolioId) : null}
                   totalTRY={convertToTRY(tx.quantity * tx.price + (tx.fee || 0), tx.currency, settings.fxRates)}
                   t={t}
                   onEdit={() => openEdit(tx)}
@@ -303,6 +308,9 @@ export default function Transactions() {
                 <tbody>
                   {filtered.map((tx) => {
                     const subPortfolio = subPortfolios.find((p) => p.id === tx.portfolioId)
+                    const toPortfolio = tx.toPortfolioId
+                      ? subPortfolios.find((p) => p.id === tx.toPortfolioId)
+                      : null
                     const totalLocal = tx.quantity * tx.price + (tx.fee || 0)
                     const totalTRY = convertToTRY(totalLocal, tx.currency, settings.fxRates)
                     return (
@@ -323,12 +331,18 @@ export default function Transactions() {
                           )}
                         </td>
                         <td className="px-3 py-3 text-text-secondary whitespace-nowrap">
-                          {subPortfolio ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full" style={{ background: subPortfolio.color }} />
-                              {subPortfolio.name}
-                            </span>
-                          ) : '—'}
+                          {/* Transferin İKİ ucu birden yazılıyor. Tek uç yazılırken
+                              hedefe süzülmüş listede satır kaynağın adını taşıyordu
+                              ve "bu para nereden geldi" cevapsız kalıyordu. */}
+                          <span className="inline-flex items-center gap-1.5">
+                            <PortfolioTag p={subPortfolio} />
+                            {toPortfolio && (
+                              <>
+                                <ArrowRight size={11} className="text-text-tertiary shrink-0" />
+                                <PortfolioTag p={toPortfolio} />
+                              </>
+                            )}
+                          </span>
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums text-text-primary">
                           {tx.type === 'exchange'
@@ -475,7 +489,17 @@ function EmptyState({ hasFilters, t }) {
 // One transaction as a card. Everything the table row carries, arranged for a
 // column instead of a line: identity and date on the left, the number that
 // matters on the right, and the controls under it where the thumb already is.
-function TransactionCard({ tx, subPortfolio, totalTRY, t, onEdit, onDelete }) {
+function PortfolioTag({ p }) {
+  if (!p) return <span className="text-text-tertiary">—</span>
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: p.color }} />
+      {p.name}
+    </span>
+  )
+}
+
+function TransactionCard({ tx, subPortfolio, toPortfolio, totalTRY, t, onEdit, onDelete }) {
   const detail =
     tx.type === 'exchange'
       ? `${formatCurrency(tx.quantity, tx.currency, { decimals: 2 })} → ${formatCurrency(tx.toAmount || 0, tx.toCurrency || 'USD', { decimals: 2 })}`
@@ -498,12 +522,15 @@ function TransactionCard({ tx, subPortfolio, totalTRY, t, onEdit, onDelete }) {
           )}
 
           <div className="mt-1 flex items-center gap-2 flex-wrap text-2xs text-text-tertiary">
-            {subPortfolio && (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: subPortfolio.color }} />
-                {subPortfolio.name}
-              </span>
-            )}
+            <span className="inline-flex items-center gap-1.5">
+              <PortfolioTag p={subPortfolio} />
+              {toPortfolio && (
+                <>
+                  <ArrowRight size={10} className="text-text-tertiary shrink-0" />
+                  <PortfolioTag p={toPortfolio} />
+                </>
+              )}
+            </span>
             {tx.assetType !== 'cash' && <span>{t.assets[tx.assetType]}</span>}
             {tx.fee ? (
               <span className="tabular-nums">

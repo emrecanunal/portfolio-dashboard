@@ -26,6 +26,7 @@ import { usePortfolioStore } from '../lib/store.js'
 import { useT } from '../i18n/useT.js'
 import {
   computePortfolioSummary,
+  scopeTransactions,
   computeAllocation,
   computeAllocationDetail,
   computeHoldingAllocation,
@@ -69,8 +70,8 @@ export function PortfolioView({ scope = { type: 'master' } }) {
 
   // Filter transactions to scope (used everywhere)
   const scopedTxns = useMemo(
-    () => (isMaster ? transactions : transactions.filter((tx) => tx.portfolioId === portfolioId)),
-    [transactions, isMaster, portfolioId]
+    () => scopeTransactions(transactions, portfolioId),
+    [transactions, portfolioId]
   )
 
   // === DERIVED ===

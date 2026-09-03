@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react'
 import { AlertTriangle, X as XIcon } from 'lucide-react'
 import { usePortfolioStore } from '../lib/store.js'
 import { useT } from '../i18n/useT.js'
-import { computeDataWarnings } from '../lib/calculations.js'
+import { computeDataWarnings, scopeTransactions } from '../lib/calculations.js'
 import { formatCurrency } from '../lib/currency.js'
 
 export function DataWarnings({ portfolioId = null }) {
@@ -22,7 +22,7 @@ export function DataWarnings({ portfolioId = null }) {
   const [dismissed, setDismissed] = useState(false)
 
   const scoped = useMemo(
-    () => (portfolioId ? transactions.filter((tx) => tx.portfolioId === portfolioId) : transactions),
+    () => scopeTransactions(transactions, portfolioId),
     [transactions, portfolioId]
   )
 
@@ -86,6 +86,18 @@ export function DataWarnings({ portfolioId = null }) {
             symbol: w.symbol,
             currencies: w.currencies.join(' + '),
             first: w.currencies[0],
+          }),
+        })
+      } else if (w.code === 'negative_currency') {
+        // Tutar KENDİ para biriminde yazılıyor, TL karşılığıyla değil: eksik
+        // olan şey o dövizin kendisi, ve kullanıcının araması gereken kayıt da
+        // o para biriminde duruyor.
+        out.push({
+          key: `negccy-${w.portfolioId}-${w.currency}`,
+          text: ti(t.warnings.negativeCurrency, {
+            portfolio: portfolioName(w.portfolioId),
+            amount: formatCurrency(Math.abs(w.amount), w.currency, { decimals: 2 }),
+            currency: w.currency,
           }),
         })
       }

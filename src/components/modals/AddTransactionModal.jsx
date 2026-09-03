@@ -2,7 +2,12 @@ import { useState, useMemo, useEffect } from 'react'
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowDownLeft, ArrowUpRight, Sparkles, ArrowLeftRight, ArrowRightLeft } from 'lucide-react'
 import { useT } from '../../i18n/useT.js'
 import { usePortfolioStore } from '../../lib/store.js'
-import { computePortfolioSummary, computeHoldings, todayYmd } from '../../lib/calculations.js'
+import {
+  computePortfolioSummary,
+  computeHoldings,
+  computeCashByCurrency,
+  todayYmd,
+} from '../../lib/calculations.js'
 import { convertToTRY, formatCurrency, formatFxRate, quoteFxRate } from '../../lib/currency.js'
 import { Modal } from '../ui/Modal.jsx'
 import { Button } from '../ui/Primitives.jsx'
@@ -42,6 +47,7 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
 
   const [form, setForm] = useState(() => initialForm(subPortfolios, existingTxn, defaultPortfolioId))
   const [confirmedCashWarning, setConfirmedCashWarning] = useState(false)
+  const [confirmedCurrencyWarning, setConfirmedCurrencyWarning] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [priceAutofilled, setPriceAutofilled] = useState(false)
 
@@ -50,6 +56,7 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
     if (open) {
       setForm(initialForm(subPortfolios, existingTxn, defaultPortfolioId))
       setConfirmedCashWarning(false)
+      setConfirmedCurrencyWarning(false)
       setSubmitError('')
       setPriceAutofilled(false)
     }
@@ -164,6 +171,33 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
     return null
   }, [form.type, txnTotalTRY, transactions, priceCache, settings, isEdit])
 
+  // === Portföyde olmayan bir dövizi göndermek ===
+  //
+  // Transfer para birimi ÇEVİRMEZ, bir tutarı olduğu para biriminde taşır.
+  // Yalnızca TL tutan Kasa'dan USD göndermek, defterde eksi bir USD kovası
+  // açıyor: TL'ye çevrilmiş toplam doğru göründüğü ve eksi nakit kontrolü de
+  // TL üzerinden baktığı için hiçbir katman bunu yakalamıyordu.
+  //
+  // Engellemiyor, onay istiyor — nakit uyarısıyla aynı desen. Geçmişi sırasız
+  // girerken para girişi henüz yazılmamış olabilir; sert bir kilit, doğru
+  // kaydı yazmayı imkânsız kılardı.
+  const currencyWarning = useMemo(() => {
+    if (form.type !== 'transfer' || !form.portfolioId) return null
+    const amount = parseFloat(form.price) || 0
+    const fee = parseFloat(form.fee) || 0
+    if (amount <= 0) return null
+    // Düzenlemede satırın kendisi hesabın dışında: kendi tutarını bakiyeden
+    // düşerek kendini uyarı sebebi yapardı.
+    const others = isEdit ? transactions.filter((tx) => tx.id !== existingTxn.id) : transactions
+    const have = computeCashByCurrency(others, form.portfolioId).get(form.currency) || 0
+    if (have >= amount + fee - 0.01) return null
+    return { have, amount: amount + fee, currency: form.currency }
+  }, [form.type, form.portfolioId, form.price, form.fee, form.currency, transactions, isEdit, existingTxn])
+
+  const blocked =
+    Boolean(cashWarning && !confirmedCashWarning) ||
+    Boolean(currencyWarning && !confirmedCurrencyWarning)
+
   // === Submit ===
   const handleSubmit = () => {
     setSubmitError('')
@@ -220,7 +254,7 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
       }
     }
 
-    if (cashWarning && !confirmedCashWarning) return
+    if (blocked) return
 
     const isCashMove =
       form.type === 'deposit' || form.type === 'withdraw' || form.type === 'transfer'
@@ -646,6 +680,16 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
           />
         )}
 
+        {/* Farklı para birimine transfer */}
+        {currencyWarning && (
+          <CurrencyWarningBox
+            warning={currencyWarning}
+            portfolioName={subPortfolios.find((p) => p.id === form.portfolioId)?.name || ''}
+            confirmed={confirmedCurrencyWarning}
+            onConfirm={setConfirmedCurrencyWarning}
+          />
+        )}
+
         {submitError && (
           <div className="bg-danger/10 border border-danger/30 rounded-lg px-3 py-2 text-sm text-danger">
             {submitError}
@@ -659,13 +703,50 @@ export function AddTransactionModal({ open, onClose, existingTxn = null, default
         </Button>
         <Button
           onClick={handleSubmit}
-          disabled={cashWarning && !confirmedCashWarning}
-          className={cn(cashWarning && !confirmedCashWarning && 'opacity-50 cursor-not-allowed')}
+          disabled={blocked}
+          className={cn(blocked && 'opacity-50 cursor-not-allowed')}
         >
           {t.common.save}
         </Button>
       </div>
     </Modal>
+  )
+}
+
+function CurrencyWarningBox({ warning, portfolioName, confirmed, onConfirm }) {
+  const { t, ti } = useT()
+  return (
+    <div className="bg-warning/10 border border-warning/30 rounded-lg p-4">
+      <div className="flex items-start gap-3 mb-3">
+        <AlertTriangle size={18} className="text-warning shrink-0 mt-0.5" strokeWidth={2} />
+        <div>
+          <div className="text-sm font-medium text-warning mb-1">{t.txn.currencyWarning}</div>
+          <p className="text-xs text-text-secondary leading-relaxed">
+            {ti(t.txn.currencyWarningBody, {
+              portfolio: portfolioName,
+              have: formatCurrency(warning.have, warning.currency, { decimals: 2 }),
+              amount: formatCurrency(warning.amount, warning.currency, { decimals: 2 }),
+              currency: warning.currency,
+            })}
+          </p>
+          <p className="text-2xs text-text-tertiary mt-2 leading-relaxed">
+            {ti(t.txn.currencyWarningHint, {
+              portfolio: portfolioName,
+              currency: warning.currency,
+            })}
+          </p>
+        </div>
+      </div>
+      <label className="flex items-center gap-2 cursor-pointer pt-2 border-t border-warning/20">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          onChange={(e) => onConfirm(e.target.checked)}
+          className="w-4 h-4 rounded border-border-strong cursor-pointer accent-warning"
+        />
+        <span className="text-xs text-text-secondary select-none">{t.txn.confirmCheckbox}</span>
+      </label>
+    </div>
   )
 }
 

@@ -351,10 +351,35 @@ export function valueHoldings(holdings, priceCache, fxRates) {
   })
 }
 
+/**
+ * Bir portföyün işlemleri — GELEN TRANSFER BACAĞI DÂHİL.
+ *
+ * "Bu satır bu portföye ait mi" sorusunun tek cevabı burası. Daha önce her
+ * çağıran yerde ayrı ayrı `tx.portfolioId === id` yazıyordu ve transferin
+ * hedefi o süzgeçte eleniyordu: para kaynaktan çıkıyor, hedefe hiç varmıyordu.
+ * Portföy kartındaki toplam, "Nakit rezerv" kutusu, performans çizgisi ve
+ * portföyün işlem listesi — dördü de eksik gösteriyordu. Ana toplam doğru
+ * çıktığı ve hiçbir kontrol bunu yakalamadığı için de sessizdi.
+ *
+ * Gelen bacak KOPYA olarak ve `__incoming` işaretiyle dönüyor — computeCashRuns'un
+ * kurduğu düzen. cashDeltaTRY o işarete bakıp tutarı artı sayıyor; işaretsiz
+ * bırakılsaydı parayı ALAN portföy onu çıkış gibi yazardı. Kopya şart: aynı
+ * nesneye işaret koymak, kaynak kapsamdaki hesabı da bozardı.
+ */
+export function scopeTransactions(transactions, portfolioId = null) {
+  if (!portfolioId) return transactions
+  const out = []
+  for (const tx of transactions) {
+    if (tx.portfolioId === portfolioId) out.push(tx)
+    else if (tx.type === 'transfer' && tx.toPortfolioId === portfolioId) {
+      out.push({ ...tx, __incoming: true })
+    }
+  }
+  return out
+}
+
 export function computePortfolioSummary(transactions, priceCache, fxRates, portfolioId = null) {
-  const filtered = portfolioId
-    ? transactions.filter((t) => t.portfolioId === portfolioId)
-    : transactions
+  const filtered = scopeTransactions(transactions, portfolioId)
 
   const holdings = computeHoldings(filtered)
   const valued = valueHoldings(holdings, priceCache, fxRates)
@@ -506,6 +531,29 @@ export function computeDataWarnings(
     }
     for (const [portfolioId, count] of counts) {
       warnings.push({ code: 'orphan_transactions', portfolioId, count })
+    }
+  }
+
+  // 6. Bir portföyün elinde OLMAYAN bir dövizi harcaması.
+  //
+  //    Kasa'da yalnızca TL varken oradan USD transfer etmek, defterde USD
+  //    kovasını eksiye düşürüyor — yani kaydedilmemiş bir döviz çevirimi var.
+  //    Fazla satılmış pozisyonla aynı sınıf hata: olmayan bir şey harcanmış.
+  //
+  //    Yukarıdaki nakit kontrolü bunu YAKALAMAZ, çünkü o her şeyi TL'ye çevirip
+  //    tek bir toplama bakıyor: 837.700 ₺ artı iken −5.651 USD'lik kova görünmez
+  //    kalıyor ve toplam sağlıklı görünüyor. Ayrı bir kontrol olmasının sebebi bu.
+  const portfolioIds = new Set()
+  for (const tx of transactions) {
+    if (tx.portfolioId) portfolioIds.add(tx.portfolioId)
+    if (tx.toPortfolioId) portfolioIds.add(tx.toPortfolioId)
+  }
+  for (const pid of portfolioIds) {
+    for (const [currency, amount] of computeCashByCurrency(transactions, pid)) {
+      // Kuruş altı sapmalar kayan nokta gürültüsü, hata değil.
+      if (amount < -0.01) {
+        warnings.push({ code: 'negative_currency', portfolioId: pid, currency, amount })
+      }
     }
   }
 

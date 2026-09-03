@@ -27,6 +27,7 @@ import {
   valueAtMonth,
   projectMonthsToFire,
   computeHoldingAllocation,
+  scopeTransactions,
 } from './calculations.js'
 import { computeStageTargets, computeJourneyPosition } from './fireStages.js'
 
@@ -986,5 +987,112 @@ describe('baslangic bakiyesi (opening)', () => {
   it('TASARRUF sayilmaz', () => {
     const withOpening = computeFireMetrics([O('t3', 500000)], {}, FX, 6)
     expect(withOpening.avgMonthlySavingsTRY).toBe(0)
+  })
+})
+
+
+// Portfoy kapsami: GELEN TRANSFER BACAGI.
+//
+// 3 Eylul 2026: Kasa'dan Amerika'ya gonderilen para Amerika'nin hicbir
+// ekraninda gorunmuyordu. computePortfolioSummary once tx.portfolioId'ye gore
+// suzup sonra nakdi hesapliyordu; transferin satiri kaynaga ait oldugu icin
+// hedefe bakilirken listeden tamamen dusuyordu. Ana toplam dogru ciktigi ve
+// hicbir kontrol bunu yakalamadigi icin de sessizdi.
+describe('scopeTransactions', () => {
+  const FX = { TRY: 1, USD: 40 }
+  const O = (pid, amount, over = {}) => ({
+    id: `o-${pid}`, type: 'opening', assetType: 'cash', symbol: 'CASH',
+    portfolioId: pid, quantity: 1, price: amount, fee: 0, currency: 'TRY',
+    date: '2026-09-01', ...over,
+  })
+  const T = (from, to, amount, over = {}) => ({
+    id: `tr-${from}-${to}-${amount}`, type: 'transfer', assetType: 'cash', symbol: 'CASH',
+    portfolioId: from, toPortfolioId: to, quantity: 1, price: amount, fee: 0,
+    currency: 'TRY', date: '2026-09-03', ...over,
+  })
+  const BOOK = [O('kasa', 837700), T('kasa', 'amerika', 100000)]
+
+  it('hedef portfoy gelen parayi gorur', () => {
+    expect(computePortfolioSummary(BOOK, {}, FX, 'amerika').cashTotal).toBe(100000)
+  })
+
+  it('kaynak portfoy dogru kalir', () => {
+    expect(computePortfolioSummary(BOOK, {}, FX, 'kasa').cashTotal).toBe(737700)
+  })
+
+  // Iki portfoyun toplami ana toplama esit olmali. Hedef bacagi eklerken
+  // kaynagi da artiya yazmak, bu testin yakaladigi tek satirlik hata.
+  it('portfoy toplamlari ana toplama esit', () => {
+    const master = computePortfolioSummary(BOOK, {}, FX, null).totalValue
+    const parts = ['kasa', 'amerika']
+      .map((id) => computePortfolioSummary(BOOK, {}, FX, id).totalValue)
+      .reduce((a, b) => a + b, 0)
+    expect(parts).toBeCloseTo(master)
+  })
+
+  it('gelen bacak KOPYA olarak isaretlenir, kaynagin satiri kirletilmez', () => {
+    const scoped = scopeTransactions(BOOK, 'amerika')
+    expect(scoped).toHaveLength(1)
+    expect(scoped[0].__incoming).toBe(true)
+    expect(BOOK[1].__incoming).toBeUndefined()
+    // Isaret ayni nesneye konsaydi kaynak da parayi ALMIS sayilirdi.
+    expect(computePortfolioSummary(BOOK, {}, FX, 'kasa').cashTotal).toBe(737700)
+  })
+
+  it('portfolioId yoksa liste oldugu gibi doner', () => {
+    expect(scopeTransactions(BOOK, null)).toBe(BOOK)
+  })
+})
+
+// Portfoyde olmayan bir dovizin harcanmasi.
+//
+// Yalnizca TL tutan Kasa'dan USD transferi, defterde eksi bir USD kovasi
+// aciyor: kaydedilmemis bir doviz cevirimi. Fazla satilmis pozisyonla ayni
+// sinif hata, ama eksi nakit kontrolu her seyi TL'ye cevirip tek toplama
+// baktigi icin gorunmuyordu.
+describe('eksi doviz bakiyesi', () => {
+  const FX = { TRY: 1, USD: 40 }
+  const O = (pid, amount) => ({
+    id: `o-${pid}`, type: 'opening', assetType: 'cash', symbol: 'CASH',
+    portfolioId: pid, quantity: 1, price: amount, fee: 0, currency: 'TRY',
+    date: '2026-09-01',
+  })
+  const T = (from, to, amount, over = {}) => ({
+    id: `tr-${amount}`, type: 'transfer', assetType: 'cash', symbol: 'CASH',
+    portfolioId: from, toPortfolioId: to, quantity: 1, price: amount, fee: 0,
+    currency: 'TRY', date: '2026-09-03', ...over,
+  })
+
+  const negOf = (txns) =>
+    computeDataWarnings(txns, {}, FX).filter((w) => w.code === 'negative_currency')
+
+  it('sadece TL tutan portfoyden USD gonderimini yakalar', () => {
+    const neg = negOf([O('kasa', 837700), T('kasa', 'amerika', 5651.45, { currency: 'USD' })])
+    expect(neg).toHaveLength(1)
+    expect(neg[0]).toMatchObject({ portfolioId: 'kasa', currency: 'USD' })
+    expect(neg[0].amount).toBeCloseTo(-5651.45)
+  })
+
+  // Isin puf noktasi: TL'ye cevrilmis toplam SAGLIKLI gorunuyor. Eski kontrol
+  // yalnizca ona baktigi icin bu satiri hic gormedi.
+  it('TL toplami artida olsa bile yakalar', () => {
+    const txns = [O('kasa', 837700), T('kasa', 'amerika', 5651.45, { currency: 'USD' })]
+    expect(computePortfolioSummary(txns, {}, FX, 'kasa').cashRawTotal).toBeGreaterThan(0)
+    expect(negOf(txns)).toHaveLength(1)
+  })
+
+  it('ayni para biriminde transferde susar', () => {
+    expect(negOf([O('kasa', 837700), T('kasa', 'amerika', 100000)])).toEqual([])
+  })
+
+  it('once takas edilmisse susar', () => {
+    const txns = [
+      O('kasa', 837700),
+      { id: 'x1', type: 'exchange', assetType: 'cash', symbol: 'TRY→USD', portfolioId: 'kasa',
+        quantity: 226058, price: 1, fee: 0, currency: 'TRY',
+        toAmount: 5651.45, toCurrency: 'USD', date: '2026-09-02' },
+      T('kasa', 'amerika', 5651.45, { currency: 'USD' }),
+    ]
+    expect(negOf(txns)).toEqual([])
   })
 })
