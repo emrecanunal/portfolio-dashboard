@@ -86,7 +86,7 @@ export const translations = {
       mixedCurrency: '{symbol} was traded in {currencies}. The position is valued entirely in {first} — one of the lots uses the wrong rate.',
       missingPrice: 'No price for {symbol}. It is being valued at its own cost, so its profit/loss reads as exactly 0%.',
       missingPriceMany: 'No price for {symbols}. They are valued at cost, so their profit/loss reads as exactly 0%.',
-      negativeCurrency: '{portfolio}: the {currency} balance is {amount} below zero. No {currency} ever entered this portfolio — an exchange is probably unrecorded.',
+      negativeCurrency: '{portfolio}: the {currency} balance is {amount} below zero. More {currency} left this portfolio than ever entered it — an exchange or a deposit is probably unrecorded.',
     },
     dashboard: {
       masterView: 'Master view · all portfolios',
@@ -514,7 +514,7 @@ export const translations = {
       mixedCurrency: '{symbol} {currencies} olarak işlem görmüş. Pozisyonun tamamı {first} sayılıyor — lotlardan biri yanlış kurla çevriliyor.',
       missingPrice: '{symbol} için fiyat yok. Kendi maliyetiyle değerleniyor, bu yüzden kâr/zararı tam %0 görünüyor.',
       missingPriceMany: '{symbols} için fiyat yok. Maliyetleriyle değerleniyorlar, bu yüzden kâr/zararları tam %0 görünüyor.',
-      negativeCurrency: '{portfolio}: {currency} bakiyesi {amount} eksiye düşmüş. Bu portföye hiç {currency} girmemiş — muhtemelen kaydedilmemiş bir takas var.',
+      negativeCurrency: '{portfolio}: {currency} bakiyesi {amount} eksiye düşmüş. Bu portföyden, içine girenden daha fazla {currency} çıkmış — kaydedilmemiş bir takas ya da eksik bir para girişi var.',
     },
     dashboard: {
       masterView: 'Ana görünüm · tüm portföyler',

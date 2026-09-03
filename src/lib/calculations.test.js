@@ -11,6 +11,7 @@
 // written to pass in ANY timezone; run `npm run test:tz` to prove it.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import * as C from './calculations.js'
 import {
   computeHoldings,
   computeCashByPortfolio,
@@ -1083,6 +1084,17 @@ describe('eksi doviz bakiyesi', () => {
 
   it('ayni para biriminde transferde susar', () => {
     expect(negOf([O('kasa', 837700), T('kasa', 'amerika', 100000)])).toEqual([])
+  })
+
+  // Alt portfoy sayfasinda liste o portfoye daraltilmis, ama gelen transfer
+  // bacagi da icinde ve o satir KAYNAGA ait. Kaynagi da kontrol edince, Kasa'nin
+  // yalnizca bu cikisi goruluyor, acilis bakiyesi kapsam disinda kaliyor ve
+  // Amerika sayfasinda Kasa hakkinda yanlis bir uyari cikiyordu.
+  it('daraltilmis kapsamda BASKA portfoy hakkinda uyarmaz', () => {
+    const txns = [O('kasa', 837711), T('kasa', 'amerika', 241590)]
+    expect(negOf(txns)).toEqual([])                       // ana ekran
+    expect(negOf(C.scopeTransactions(txns, 'amerika'))).toEqual([])   // Amerika sayfasi
+    expect(negOf(C.scopeTransactions(txns, 'kasa'))).toEqual([])      // Kasa sayfasi
   })
 
   it('once takas edilmisse susar', () => {

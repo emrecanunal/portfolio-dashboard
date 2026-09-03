@@ -543,10 +543,21 @@ export function computeDataWarnings(
   //    Yukarıdaki nakit kontrolü bunu YAKALAMAZ, çünkü o her şeyi TL'ye çevirip
   //    tek bir toplama bakıyor: 837.700 ₺ artı iken −5.651 USD'lik kova görünmez
   //    kalıyor ve toplam sağlıklı görünüyor. Ayrı bir kontrol olmasının sebebi bu.
+  //    YALNIZCA KENDİ SATIRLARI BURADA OLAN PORTFÖY kontrol edilebilir.
+  //
+  //    Bir alt portföy sayfasında liste o portföye daraltılmış, ama içinde
+  //    transferin gelen bacağı da var ve o satır KAYNAĞA ait. Kaynağın id'sini
+  //    de kontrol listesine alınca, Kasa'nın yalnızca bu çıkışı görülüyor ve
+  //    açılış bakiyesi kapsam dışında kaldığı için "Kasa'nın TL'si eksi"
+  //    deniyordu — Amerika sayfasında, Kasa hakkında, tamamen yanlış.
+  //
+  //    __incoming işaretli satır başka bir portföyün kaydının kopyası; sahibi
+  //    burada değil. Hedefi ayrıca eklemeye de gerek yok: yalnızca para ALAN
+  //    bir portföyün bakiyesi eksiye düşemez.
   const portfolioIds = new Set()
   for (const tx of transactions) {
+    if (tx.__incoming) continue
     if (tx.portfolioId) portfolioIds.add(tx.portfolioId)
-    if (tx.toPortfolioId) portfolioIds.add(tx.toPortfolioId)
   }
   for (const pid of portfolioIds) {
     for (const [currency, amount] of computeCashByCurrency(transactions, pid)) {
